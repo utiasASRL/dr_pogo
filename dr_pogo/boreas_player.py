@@ -128,8 +128,8 @@ class BoreasPlayerNode(Node):
                 # Publish radar image
                 polar_image = self.next_radar.polar
                 radar_image_msg = bridge.cv2_to_imgmsg(polar_image, encoding="32FC1")
-                radar_image_msg.header.stamp.sec = int(self.next_radar.timestamp * 1e-6)
-                radar_image_msg.header.stamp.nanosec = int((self.next_radar.timestamp % 1e6) * 1e3)
+                radar_image_msg.header.stamp.sec = int(self.next_radar.timestamp )
+                radar_image_msg.header.stamp.nanosec = int((self.next_radar.timestamp % 1) * 1e9)
                 radar_image_msg.header.frame_id = "radar"
                 radar_image_pub.publish(radar_image_msg)
 
@@ -143,9 +143,9 @@ class BoreasPlayerNode(Node):
                 radar_info_msg.resolution = self.next_radar.resolution
 
                 radar_info_msg.chirps = np.asarray(self.next_chirps, dtype=np.uint8).ravel().tolist()
+                radar_info_msg.sequence_id = sequence_id
                 radar_info_pub.publish(radar_info_msg)
 
-                radar_info_msg.sequence_id = sequence_id
 
 
 
@@ -197,8 +197,8 @@ class BoreasPlayerNode(Node):
 
 def main():
     parser = argparse.ArgumentParser(description='Boreas Dataset Player Node')
-    parser.add_argument('--sequence_path', type=str, required=True, help='Path to the Boreas sequence folder')
-    parser.add_argument('--playback_rate', type=float, default=1.0, help='Playback rate (1.0 = real-time)')
+    parser.add_argument('-p', '--sequence_path', type=str, required=True, help='Path to the Boreas sequence folder')
+    parser.add_argument('-r', '--playback_rate', type=float, default=1.0, help='Playback rate (1.0 = real-time)')
     args = parser.parse_args()
 
     rclpy.init()

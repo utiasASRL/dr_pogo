@@ -5,8 +5,9 @@ from sensor_msgs.msg import Image
 from message_filters import Subscriber, TimeSynchronizer
 from dr_pogo.msg import RadarInfo
 import numpy as np
-
-
+import yaml
+from dro import Dro, kDefaultDroOpts
+import os
 
 
 class DroNode(Node):
@@ -32,8 +33,49 @@ class DroNode(Node):
 
         self.last_imu_time = None
 
+        self.initialized = False
+
+        # Load the config file and populate the DRO options
+        config_file_path = "config/config_dro.yaml"
+        with open(config_file_path, 'r') as file:
+            config = yaml.safe_load(file)
+        dro_opts = kDefaultDroOpts.copy()
+        if 'estimation' not in config:
+            self.get_logger().error("DRO configuration file is missing the 'estimation' section.")
+            return
+        if 'use_gyro' in config['estimation']:
+            dro_opts['estimation']['use_gyro'] = config['estimation']['use_gyro']
+        if 'estimate_gyro_bias' in config['estimation']:
+            dro_opts['estimation']['estimate_gyro_bias'] = config['estimation']['estimate_gyro_bias']
+        if 'estimate_vy_bias' in config['estimation']:
+            dro_opts['estimation']['estimate_vy_bias'] = config['estimation']['estimate_vy_bias']
+        if 'max_acceleration' in config['estimation']:
+            dro_opts['estimation']['max_acceleration'] = config['estimation']['max_acceleration']
+        if 'vy_bias_prior' in config['estimation']:
+            dro_opts['estimation']['vy_bias_prior'] = config['estimation']['vy_bias_prior']
+        if 'min_time_bias_init' in config['estimation']:
+            dro_opts['estimation']['imu_init_time'] = config['estimation']['min_time_bias_init']
+
+        self.get_logger().warn("OPTIONS NOT FULLY IMPLEMENTED, USING DEFAULTS FOR THE REST")
+
+
+        self.dro = Dro(dro_opts)
+
+
+    def initialize(self, radar_data):
+        # Create the output folders for the sequence
+        self.seq_output_folder = os.path.join("output", radar_data['sequence_id'])
+        print(f"Creating output folder: {self.seq_output_folder}")
+        os.makedirs(self.seq_output_folder, exist_ok=True)
+
+        print("TODO: Initialize the DRO with the first radar data")
+
+        self.initialized = True
+
 
     def radarCallback(self, image_msg, radar_info_msg):
+        if self.initialized == False:
+            self.initialize({'sequence_id': radar_info_msg.sequence_id})
         polar_image = np.frombuffer(image_msg.data, dtype=np.float32).reshape((image_msg.height, image_msg.width))
         azimuths = np.asarray(radar_info_msg.azimuth, dtype=np.float32)
         timestamps = np.asarray(radar_info_msg.timestamps, dtype=np.int64)
@@ -87,8 +129,24 @@ class DroNode(Node):
         end_idx = min(len(imu_times), end_idx + 1)  # Ensure at least one IMU after the radar timestamps
         relevant_imus = self.imu_data_buffer[start_idx:end_idx]
 
-        #self.dro(self.radar_data_buffer[0], relevant_imus)
         self.get_logger().info(f"Processing radar scan (from {round(first_radar_time*1e-6, 3)} to {round(last_radar_time*1e-6, 3)}) with {len(relevant_imus)} IMU measurements from {round(imu_times[start_idx]*1e-6, 3)} to {round(imu_times[end_idx-1]*1e-6, 3)}")
+        self.get_logger().warn("TODO: Add the proper handling of the gyro data (and bias estimation) in the DRO code")
+        self.dro.odometryStep(self.radar_data_buffer[0], relevant_imus)
+
+        self.get_logger().warn("TODO: Add the handling of the vy bias estimation in the DRO code")
+
+        # Get the odometry results
+        self.get_logger().warn("TODO: Get the odometry results and publish them")
+
+        # If use gyro, feed the velocity estimates with the gyro for 3D state estimation
+        self.get_logger().warn("TODO: compute the 3D pose")
+
+        # Publish the odometry results
+        self.get_logger().warn("TODO: publish the odometry results")
+
+        # Log the odometry results
+        self.get_logger().warn("TODO: log the odometry results")
+
 
         # Clear the first radar
         temp_last_time = self.radar_data_buffer[0]['timestamps'][-1]
