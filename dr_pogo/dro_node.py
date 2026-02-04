@@ -2,6 +2,7 @@ import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import Imu
 from sensor_msgs.msg import Image
+from nav_msgs.msg import Odometry
 from message_filters import Subscriber, TimeSynchronizer
 from dr_pogo.msg import RadarInfo
 import numpy as np
@@ -9,7 +10,7 @@ import yaml
 import copy
 from dro import Dro, kDefaultDroOpts
 import os
-
+from scipy.spatial.transform import Rotation as R
 
 class DroNode(Node):
     def __init__(self):
@@ -28,6 +29,11 @@ class DroNode(Node):
         self.radar_info_subscription = Subscriber(self, RadarInfo, '/boreas/radar_info')
         self.ts = TimeSynchronizer([self.image_subscription, self.radar_info_subscription], 10)
         self.ts.registerCallback(self.radarCallback)
+
+        # Set the publisher for the odometry
+        self.odometry_publisher = self.create_publisher(Odometry, 'dro_odometry', 10)
+
+
 
         self.radar_data_buffer = []
         self.imu_data_buffer = []
@@ -146,16 +152,17 @@ class DroNode(Node):
         self.get_logger().warn("TODO: Add the handling of the vy bias estimation in the DRO code")
 
         # Get the odometry results
-        self.get_logger().warn("TODO: Get the odometry results and publish them")
+        current_odometry = self.dro.getPose(self.radar_data_buffer[0]['timestamp'])
+        self.get_logger().info(f"Current odometry:\n{current_odometry}")
+        self.publishOdometry(current_odometry)
 
         # If use gyro, feed the velocity estimates with the gyro for 3D state estimation
         self.get_logger().warn("TODO: compute the 3D pose")
 
-        # Publish the odometry results
-        self.get_logger().warn("TODO: publish the odometry results")
-
         # Log the odometry results
         self.get_logger().warn("TODO: log the odometry results")
+
+        self.get_logger().info("TODO: Write the local map and pose to disk")
 
 
         # Clear the first radar
@@ -171,6 +178,26 @@ class DroNode(Node):
         next_start_idx = np.searchsorted(imu_times, next_radar_time, side='left')
         self.imu_data_buffer = self.imu_data_buffer[next_start_idx - 1:]  # Keep one IMU before the next radar
 
+
+
+    def publishOdometry(self, pose):
+        odom_msg = Odometry()
+        odom_msg.header.stamp = self.get_clock().now().to_msg()
+        odom_msg.header.frame_id = "odom"
+        odom_msg.child_frame_id = "radar"
+
+        # Set position
+        odom_msg.pose.pose.position.x = pose[0, 3]
+        odom_msg.pose.pose.position.y = pose[1, 3]
+        odom_msg.pose.pose.position.z = 0.0  # Assuming planar motion
+
+        # Set orientation (yaw only)
+        quaternion = R.from_matrix(pose[:3, :3]).as_quat()  # Convert rotation matrix to quaternion
+        odom_msg.pose.pose.orientation.x = quaternion[0]
+        odom_msg.pose.pose.orientation.y = quaternion[1]
+        odom_msg.pose.pose.orientation.z = quaternion[2]
+        odom_msg.pose.pose.orientation.w = quaternion[3]
+        self.odometry_publisher.publish(odom_msg)
 
 
 

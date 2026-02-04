@@ -140,7 +140,7 @@ class Dro():
 
             # Prepare the chirp direction
             if self.use_doppler:
-                self.chirp_up = not (radar_data['chirps'][0] == 0)
+                self.chirp_up = (radar_data['chirps'][0] == 0)
             else:
                 self.chirp_up = radar_data['chirps'][0] == 0
 
@@ -1004,16 +1004,31 @@ class Dro():
 
     # Pull the state estimate
     def getAzPosRot(self):
-        if self.pose_estimation:
-            rot_mat = torch.tensor([[torch.cos(self.current_rot), -torch.sin(self.current_rot)], [torch.sin(self.current_rot), torch.cos(self.current_rot)]]).to(self.device)
+        rot_mat = torch.tensor([[torch.cos(self.current_rot), -torch.sin(self.current_rot)], [torch.sin(self.current_rot), torch.cos(self.current_rot)]]).to(self.device)
 
-            _, scan_pos, scan_rot = self.motion_model.getVelPosRot(self.state_init, with_jac=False)
-            pos = rot_mat @ scan_pos.double() + self.current_pos.unsqueeze(1)
-            rot = scan_rot.double() + self.current_rot
+        _, scan_pos, scan_rot = self.motion_model.getVelPosRot(self.state_init, with_jac=False)
+        pos = rot_mat @ scan_pos.double() + self.current_pos.unsqueeze(1)
+        rot = scan_rot.double() + self.current_rot
 
-            return pos.detach().cpu().numpy(), rot.detach().cpu().numpy()
-        else:
-            return None, None
+        return pos.detach().cpu().numpy(), rot.detach().cpu().numpy()
+
+    def getPose(self, time):
+        frame_pos, frame_rot = self.motion_model.getPosRotSingle(self.state_init, time)
+        frame_pos = frame_pos.detach().cpu().numpy().astype(np.float64)
+        frame_rot = frame_rot.detach().cpu().numpy().astype(np.float64)
+
+        c_rot = np.cos(self.current_rot.detach().cpu().numpy().astype(np.float64))
+        s_rot = np.sin(self.current_rot.detach().cpu().numpy().astype(np.float64))
+        rot_mat = np.array([[c_rot, -s_rot], [s_rot, c_rot]])
+        pos = (rot_mat @ frame_pos.T).T + self.current_pos.detach().cpu().numpy().astype(np.float64)
+        rot = frame_rot + self.current_rot.detach().cpu().numpy().astype(np.float64)
+        pose = np.zeros((4,4), dtype=np.float64)
+        pose[0:2,0:2] = np.array([[np.cos(rot), -np.sin(rot)], [np.sin(rot), np.cos(rot)]])
+        pose[0:2,3] = pos
+        pose[2,2] = 1.0
+        pose[3,3] = 1.0
+
+        return pose
 
 
 
