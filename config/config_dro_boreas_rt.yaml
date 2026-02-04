@@ -44,7 +44,6 @@ log:
 radar:
   beta_corr_fact: 0.944
   del_f: 893.0E6
-  doppler_enabled: true
   ft: 76.04E9
   meas_freq: 1600.0
   range_offset: -0.31

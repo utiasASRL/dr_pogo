@@ -6,6 +6,7 @@ from message_filters import Subscriber, TimeSynchronizer
 from dr_pogo.msg import RadarInfo
 import numpy as np
 import yaml
+import copy
 from dro import Dro, kDefaultDroOpts
 import os
 
@@ -39,24 +40,33 @@ class DroNode(Node):
         config_file_path = "config/config_dro.yaml"
         with open(config_file_path, 'r') as file:
             config = yaml.safe_load(file)
-        dro_opts = kDefaultDroOpts.copy()
+        dro_opts = copy.deepcopy(kDefaultDroOpts)
         if 'estimation' not in config:
             self.get_logger().error("DRO configuration file is missing the 'estimation' section.")
             return
-        if 'use_gyro' in config['estimation']:
-            dro_opts['estimation']['use_gyro'] = config['estimation']['use_gyro']
-        if 'estimate_gyro_bias' in config['estimation']:
-            dro_opts['estimation']['estimate_gyro_bias'] = config['estimation']['estimate_gyro_bias']
-        if 'estimate_vy_bias' in config['estimation']:
-            dro_opts['estimation']['estimate_vy_bias'] = config['estimation']['estimate_vy_bias']
-        if 'max_acceleration' in config['estimation']:
-            dro_opts['estimation']['max_acceleration'] = config['estimation']['max_acceleration']
-        if 'vy_bias_prior' in config['estimation']:
-            dro_opts['estimation']['vy_bias_prior'] = config['estimation']['vy_bias_prior']
-        if 'min_time_bias_init' in config['estimation']:
-            dro_opts['estimation']['imu_init_time'] = config['estimation']['min_time_bias_init']
+        for section_name, defaults in dro_opts.items():
+            if section_name not in config:
+                self.get_logger().warn(f"DRO configuration missing section '{section_name}', using defaults.")
+                continue
+            for key in defaults.keys():
+                if key in config[section_name]:
+                    if section_name == 'estimation' and key == 'T_axle_radar':
+                        dro_opts[section_name][key] = np.array(config[section_name][key], dtype=np.float64)
+                    else:
+                        dro_opts[section_name][key] = config[section_name][key]
 
-        self.get_logger().warn("OPTIONS NOT FULLY IMPLEMENTED, USING DEFAULTS FOR THE REST")
+
+        for section_name, section_cfg in config.items():
+            if section_name not in dro_opts:
+                self.get_logger().warn(
+                    f"DRO configuration section '{section_name}' is not used by defaults and will be ignored."
+                )
+                continue
+            unknown_keys = set(section_cfg.keys()) - set(dro_opts[section_name].keys())
+            if unknown_keys:
+                self.get_logger().warn(
+                    f"DRO configuration section '{section_name}' has unused keys: {sorted(unknown_keys)}"
+                )
 
 
         self.dro = Dro(dro_opts)

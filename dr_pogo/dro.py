@@ -12,7 +12,7 @@ kDefaultDroOpts = {
         'estimate_vy_bias': False,
         'vy_bias_prior': 0.11,
         'max_acceleration': 10.0,
-        'imu_init_time': 1.0,
+        'min_time_bias_init': 1.0,
         'T_axle_radar': np.eye(4),
     },
     'gp': {
