@@ -12,6 +12,8 @@ class MotionModel:
         self.t0 = None
 
     def setTime(self, time, t0):
+        self.original_time = time.clone()
+        self.original_t0 = t0.clone()
         self.time = (time - t0).float() * torch.tensor(1.0e-6).to(self.device)
         self.t0 = t0
         self.num_steps = torch.tensor(len(time)).to(self.device)
@@ -79,6 +81,8 @@ class ConstBodyVelGyro(MotionModel):
     def setGyroData(self, gyro_time, gyro_yaw):
         self.first_gyro_time = gyro_time[0]
         self.gyro_time = torch.tensor(gyro_time - self.first_gyro_time).double().to(self.device)
+        self.first_gyro_time *= 1.0e-6
+        self.gyro_time *= 1.0e-6
         self.gyro_yaw = torch.tensor(gyro_yaw).double().to(self.device)
         self.gyro_yaw_original = self.gyro_yaw.clone()
 
@@ -103,8 +107,6 @@ class ConstBodyVelGyro(MotionModel):
         if not self.initialised:
             raise ValueError("Gyro data not set")
         with torch.no_grad():
-            if not self.initialised:
-                raise ValueError("Gyro data not set")
             super().setTime(time, t0)
             # Get the integral be
             time_local = time.double()*1e-6 - self.first_gyro_time
@@ -146,8 +148,6 @@ class ConstBodyVelGyro(MotionModel):
             
 
 
-            #print("R: ", self.r)
-
     def getVelPosRot(self, state, with_jac = False):
         with torch.no_grad():
             # The state is an array of size 2. Duplicate it for each azimuth
@@ -169,11 +169,19 @@ class ConstBodyVelGyro(MotionModel):
             return body_vel, d_vel_body_d_state, pos, d_pos_d_state, rot, d_rot_d_state
 
     def getPosRotSingle(self, state, time):
-        times = torch.arange(self.t0, time, 625, dtype=torch.int64).to(self.device)
-        if times[-1] != time:
-            times = torch.cat((times, time.unsqueeze(0)))
-        self.setTime(times, self.t0)
+        if isinstance(time, np.int64) or isinstance(time, int):
+            time = torch.tensor(time, dtype=torch.int64).to(self.device)
+        with torch.no_grad():
+            times = torch.arange(self.t0, time, 625, dtype=torch.int64).to(self.device)
+            if times[-1] != time:
+                times = torch.cat((times, time.unsqueeze(0)))
+            og_times = self.original_time.clone()
+            og_t0 = self.original_t0.clone()
 
-        pos = (self.R_integral[-1, :, :] @ state.unsqueeze(1)).squeeze()
-        rot = self.r[-1]
-        return pos, rot
+            self.setTime(times, self.t0)
+
+            pos = (self.R_integral[-1, :, :] @ state.unsqueeze(1)).squeeze()
+            rot = self.r[-1]
+
+            self.setTime(og_times, og_t0)
+            return pos, rot

@@ -138,6 +138,7 @@ class Dro():
             polar_image = radar_data['polar']
             res = radar_data['resolution']
 
+
             # Prepare the chirp direction
             if self.use_doppler:
                 self.chirp_up = (radar_data['chirps'][0] == 0)
@@ -244,6 +245,13 @@ class Dro():
                 normalizer = torch.max(self.local_map) / torch.max(self.local_map_blurred)
                 self.local_map_blurred *= normalizer
 
+
+            # Update the IMU data in the motion model
+            if self.use_gyro:
+                self.motion_model.setGyroData(
+                    gyro_time = np.array([imu['timestamp'] for imu in imu_data]),
+                    gyro_yaw = np.array([imu['angular_velocity'][2] for imu in imu_data])
+                )
 
             # Query the GP interpolation of the up and down chirp images
             if self.use_doppler:
@@ -887,7 +895,7 @@ class Dro():
             last_increasing_grad = torch.zeros_like(state)
             for i in torch.arange(nb_iter, device=self.device):
                 
-                res, jac = self.costFunctionAndJacobian(state, self.use_doppler, not doppler_only, degraded)
+                res, jac = self.costFunctionAndJacobian(state, self.use_doppler, (not doppler_only) and (self.step_counter > 0), degraded)
 
                 if remove_angular and not self.use_gyro:
                     jac = jac[:, :-1]
