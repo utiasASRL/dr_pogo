@@ -10,7 +10,7 @@ kDefaultDroOpts = {
         'use_gyro': True,
         'estimate_gyro_bias': False,
         'estimate_vy_bias': False,
-        'vy_bias_prior': 0.11,
+        'vy_bias_prior': 0.0,
         'max_acceleration': 10.0,
         'min_time_bias_init': 1.0,
         'T_axle_radar': np.eye(4),
@@ -144,6 +144,15 @@ class Dro():
                 self.chirp_up = (radar_data['chirps'][0] == 0)
             else:
                 self.chirp_up = radar_data['chirps'][0] == 0
+
+            if self.use_doppler and self.estimate_vy_bias and (np.linalg.norm(self.state_init[:2].cpu().numpy()) > 3):
+                save_vy_bias = self.vy_bias
+                vel_doppler_only = self.solve(self.state_init, 100, 1e-6, 1e-4, doppler_only=True)
+                self.vy_bias = save_vy_bias
+            else:
+                vel_doppler_only = None
+                    
+                
 
             # Prepare the timestamps
             if self.timestamps is None:
@@ -354,6 +363,22 @@ class Dro():
                     if torch.abs(result[2]) > maxAngVel(result[:2]):
                         result[2] = self.prev_state[2]
                 self.prev_state = result.clone()
+
+            # Update the vy bias if needed
+            if vel_doppler_only is not None and np.linalg.norm(result[:2].cpu().numpy()) > 3.0:
+                vel_doppler_only = np.concatenate((vel_doppler_only.cpu().numpy(), [0]))
+                T_axle_radar = self.opts['estimation']['T_axle_radar']
+                if self.use_gyro:
+                    # Get the average angular velocity between the first and last azimuth
+                    gyro_data = np.mean([imu['angular_velocity'][2] for imu in imu_data])
+                    gyro_data = T_axle_radar[:3, :3] @ np.array([0, 0, gyro_data])
+                    axle_vel = T_axle_radar[:3, :3] @ vel_doppler_only + np.cross(gyro_data, T_axle_radar[3, :3])
+                else:
+                    axle_vel = T_axle_radar[:3, :3] @ vel_doppler_only
+                vy = (T_axle_radar[:3,:3].T@(np.array([0, axle_vel[1], 0])))[1]
+                self.vy_bias = 0.01 * vy + (1-0.01) * self.vy_bias
+                print("Updated vy bias: ", self.vy_bias)
+
 
 
             self.state_init = result.clone()
