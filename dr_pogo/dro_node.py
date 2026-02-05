@@ -11,6 +11,7 @@ import copy
 from dro import Dro, kDefaultDroOpts
 import os
 from scipy.spatial.transform import Rotation as R
+import pandas as pd
 
 class DroNode(Node):
     def __init__(self):
@@ -80,11 +81,23 @@ class DroNode(Node):
 
     def initialize(self, radar_data):
         # Create the output folders for the sequence
-        self.seq_output_folder = os.path.join("output", radar_data['sequence_id'])
+        seq_ID = radar_data['sequence_id']
+        self.seq_output_folder = os.path.join("output", seq_ID)
         print(f"Creating output folder: {self.seq_output_folder}")
         os.makedirs(self.seq_output_folder, exist_ok=True)
 
-        print("TODO: Initialize the DRO with the first radar data")
+        # Create the odometry output file
+        self.odometry_output_path = os.path.join(self.seq_output_folder, "odometry_result")
+        if os.path.exists(self.odometry_output_path):
+            os.system('rm -r ' + self.odometry_output_path)
+        os.makedirs(self.odometry_output_path)
+        self.odometry_output_path = os.path.join(self.odometry_output_path, seq_ID + '.txt')
+        
+        #self.odom_2d_path = os.path.join(self.seq_output_folder, 'odometry_2d')
+        #if os.path.exists(self.odom_2d_path):
+        #    os.system('rm -r ' + self.odom_2d_path)
+        #os.makedirs(self.odom_2d_path)
+        #self.odom_2d_path = os.path.join(self.odom_2d_path, seq_ID + '.txt')
 
         self.initialized = True
 
@@ -149,20 +162,18 @@ class DroNode(Node):
         self.get_logger().warn("TODO: Add the proper handling of the gyro data (and bias estimation) in the DRO code")
         self.dro.odometryStep(self.radar_data_buffer[0], relevant_imus)
 
-        self.get_logger().warn("TODO: Add the handling of the vy bias estimation in the DRO code")
 
         # Get the odometry results
         current_odometry = self.dro.getPose(self.radar_data_buffer[0]['timestamp'])
         self.get_logger().info(f"Current odometry:\n{current_odometry}")
         self.publishOdometry(current_odometry)
+        self.logOdometry(current_odometry, self.radar_data_buffer[0]['timestamp'])
 
         # If use gyro, feed the velocity estimates with the gyro for 3D state estimation
         self.get_logger().warn("TODO: compute the 3D pose")
 
-        # Log the odometry results
-        self.get_logger().warn("TODO: log the odometry results")
 
-        self.get_logger().info("TODO: Write the local map and pose to disk")
+        self.get_logger().info("TODO: Publish the local map and pose")
 
 
         # Clear the first radar
@@ -199,6 +210,17 @@ class DroNode(Node):
         odom_msg.pose.pose.orientation.w = quaternion[3]
         self.odometry_publisher.publish(odom_msg)
 
+
+    def logOdometry(self, pose, timestamp):
+        inv_pose = np.linalg.inv(pose)
+        data = np.concatenate([timestamp.reshape(1, 1), inv_pose[:3, :].reshape(1, -1)], axis=1)
+        df_odom = pd.DataFrame(data)
+        if not os.path.exists(self.odometry_output_path):
+            df_odom.to_csv(self.odometry_output_path, header=None, index=None, sep=' ')
+        else:
+            df_odom.to_csv(self.odometry_output_path, mode='a', header=None, index=None, sep=' ')
+
+            
 
 
 if __name__ == '__main__':
