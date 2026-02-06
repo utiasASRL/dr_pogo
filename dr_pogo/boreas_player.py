@@ -184,7 +184,7 @@ class BoreasPlayerNode(Node):
             if self.next_radar is not None:
                 time_to_next_radar = (self.next_radar.timestamps[-1][0] - data_time_origin) - elapsed_actual_time
             time_to_next_event = min(time_to_next_imu, time_to_next_radar)
-            if time_to_next_event > 0:
+            if time_to_next_event > 0 and time_to_next_event != float('inf'):
                 time.sleep(time_to_next_event / 1e6)  # Convert microseconds to seconds
 
             # Check for termination condition            

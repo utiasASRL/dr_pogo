@@ -215,6 +215,7 @@ class DroNode(Node):
         inv_pose = np.linalg.inv(pose)
         data = np.concatenate([timestamp.reshape(1, 1), inv_pose[:3, :].reshape(1, -1)], axis=1)
         df_odom = pd.DataFrame(data)
+        df_odom[0] = df_odom[0].astype(np.int64)
         if not os.path.exists(self.odometry_output_path):
             df_odom.to_csv(self.odometry_output_path, header=None, index=None, sep=' ')
         else:
