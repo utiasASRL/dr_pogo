@@ -38,11 +38,15 @@ kDefaultDroOpts = {
         'min_range': 4.0,
         'max_range': 200.0,
     },
+    'log': {
+        'save_local_maps': True,
+    },
 }
 
 
 class Dro():
-    def __init__(self, opts):
+    def __init__(self, opts, node):
+        self.node = node
         with torch.no_grad():
             self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
             self.initialized = False
@@ -66,6 +70,7 @@ class Dro():
             self.estimate_gyro_bias = opts['estimation']['estimate_gyro_bias']
             self.estimate_vy_bias = opts['estimation']['estimate_vy_bias']
             self.vy_bias = opts['estimation']['vy_bias_prior']
+            self.save_local_maps = opts['log']['save_local_maps']
 
 
             # Initialise the GP parameters
@@ -102,15 +107,6 @@ class Dro():
             self.one_minus_alpha = torch.tensor(1 - local_map_update_alpha).to(self.device)
             self.alpha = torch.tensor(local_map_update_alpha).to(self.device)
 
-            #self.save_local_maps = opts['log']['save_local_maps']
-            #self.save_scans = opts['log']['save_scans']
-            #self.local_map_path  = opts['log']['local_map_path']
-            #self.cumulated_returns_path  = opts['log']['cumulated_returns_path']
-            #self.scan_path  = opts['log']['scan_path']
-            #if self.save_scans and ('max_scan_bins' in opts['log']):
-            #    self.max_scan_bins = int(opts['log']['max_scan_bins'])
-            #else:
-            #    self.max_scan_bins = 100000000
 
 
             self.current_rot = torch.tensor(0.0).to(self.device).double()
@@ -238,9 +234,12 @@ class Dro():
                     self.local_map[self.local_map_mask] = self.one_minus_alpha * self.local_map[self.local_map_mask] + self.alpha * local_map_update[self.local_map_mask]
                 #self.local_map = local_map_update
 
-                #if self.save_local_maps:
-                #    # Remove the resize entirely
+                # Publish the local map for dr_pogo
+                self.node.publishLocalMap(self.local_map, np.array([self.current_pos[0].item(), self.current_pos[1].item(), self.current_rot.item()]), timestamps[0])
+                if self.save_local_maps:
+                    self.node.writeLocalMap(self.local_map, local_map_update_cumulative, np.array([self.current_pos[0].item(), self.current_pos[1].item(), self.current_rot.item()]), timestamps[0])
                 #    lm = (self.local_map.detach().cpu().numpy().clip(0, 1) * 255).astype('uint8')
+
                 #    cv2.imwrite(self.local_map_path + "/" + str(timestamps[0]) + ".png", lm)
                 #    print("Max cumulated return: ", torch.max(local_map_update_cumulative))
                 #    lm = (local_map_update_cumulative.detach().cpu().numpy()).clip(0,255).astype('uint8')

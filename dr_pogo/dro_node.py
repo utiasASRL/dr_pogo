@@ -4,7 +4,7 @@ from sensor_msgs.msg import Imu
 from sensor_msgs.msg import Image
 from nav_msgs.msg import Odometry
 from message_filters import Subscriber, TimeSynchronizer
-from dr_pogo.msg import RadarInfo
+from dr_pogo.msg import RadarInfo, LocalMapInfo
 import numpy as np
 import yaml
 import copy
@@ -12,6 +12,8 @@ from dro import Dro, kDefaultDroOpts
 import os
 from scipy.spatial.transform import Rotation as R
 import pandas as pd
+import cv2
+from cv_bridge import CvBridge
 
 class DroNode(Node):
     def __init__(self):
@@ -33,6 +35,11 @@ class DroNode(Node):
 
         # Set the publisher for the odometry
         self.odometry_publisher = self.create_publisher(Odometry, 'dro_odometry', 10)
+
+        # Set the local map publishers
+        self.bridge = CvBridge()
+        self.local_map_image_publisher = self.create_publisher(Image, 'dro_local_map_image', 10)
+        self.local_map_info_publisher = self.create_publisher(LocalMapInfo, 'dro_local_map_info', 10)
 
 
 
@@ -76,7 +83,8 @@ class DroNode(Node):
                 )
 
 
-        self.dro = Dro(dro_opts)
+        self.dro = Dro(dro_opts, self)
+        self.dro_opts = dro_opts
 
 
     def initialize(self, radar_data):
@@ -93,6 +101,25 @@ class DroNode(Node):
         os.makedirs(self.odometry_output_path)
         self.odometry_output_path = os.path.join(self.odometry_output_path, seq_ID + '.txt')
         
+        # If saving local maps, create the folders
+        if self.dro_opts['log']['save_local_maps']:
+            self.local_map_output_path = os.path.join(self.seq_output_folder, "local_maps")
+            if os.path.exists(self.local_map_output_path):
+                os.system('rm -r ' + self.local_map_output_path)
+            os.makedirs(self.local_map_output_path)
+            self.cumulative_return_output_path = os.path.join(self.seq_output_folder, "cumulated_returns")
+            if os.path.exists(self.cumulative_return_output_path):
+                os.system('rm -r ' + self.cumulative_return_output_path)
+            os.makedirs(self.cumulative_return_output_path)
+
+            self.odometry_2d_output_path = os.path.join(self.seq_output_folder, "odometry_2d")
+            if os.path.exists(self.odometry_2d_output_path):
+                os.system('rm -r ' + self.odometry_2d_output_path)
+            os.makedirs(self.odometry_2d_output_path)
+            self.odometry_2d_output_path = os.path.join(self.odometry_2d_output_path, seq_ID + '.txt')
+
+
+
         #self.odom_2d_path = os.path.join(self.seq_output_folder, 'odometry_2d')
         #if os.path.exists(self.odom_2d_path):
         #    os.system('rm -r ' + self.odom_2d_path)
@@ -221,7 +248,36 @@ class DroNode(Node):
         else:
             df_odom.to_csv(self.odometry_output_path, mode='a', header=None, index=None, sep=' ')
 
-            
+        
+    def publishLocalMap(self, local_map, xy_theta, timestamp):
+        local_map_image_msg = self.bridge.cv2_to_imgmsg((local_map.detach().cpu().numpy()).astype(np.float32), encoding="32FC1")
+        local_map_image_msg.header.stamp.sec = int(timestamp // 1e6)
+        local_map_image_msg.header.stamp.nanosec = int((timestamp % 1e6) * 1e3)
+        local_map_image_msg.header.frame_id = "radar"
+        self.local_map_image_publisher.publish(local_map_image_msg)
+
+        map_info_msg = LocalMapInfo()
+        map_info_msg.header = local_map_image_msg.header
+        map_info_msg.x = xy_theta[0]
+        map_info_msg.y = xy_theta[1]
+        map_info_msg.theta = xy_theta[2]
+        map_info_msg.resolution = self.dro_opts['direct']['local_map_res']
+        self.local_map_info_publisher.publish(map_info_msg)
+
+
+    def writeLocalMap(self, local_map, cumulated_returns, xy_theta, timestamp):
+        local_map_to_save = (local_map.detach().cpu().numpy().clip(0, 1) * 255).astype(np.uint8)
+        cv2.imwrite(os.path.join(self.local_map_output_path, str(timestamp) + '.png'), local_map_to_save)
+        cumulated_returns_to_save = (cumulated_returns.detach().cpu().numpy().clip(0, 255)).astype(np.uint8)
+        cv2.imwrite(os.path.join(self.cumulative_return_output_path, str(timestamp) + '.png'), cumulated_returns_to_save)
+
+        df_data_2d = pd.DataFrame(np.array([timestamp, xy_theta[0], xy_theta[1], xy_theta[2]]).reshape(1, -1))
+        df_data_2d[0] = df_data_2d[0].astype(np.int64)
+        if not os.path.exists(self.odometry_2d_output_path):
+            df_data_2d.to_csv(self.odometry_2d_output_path, header=None, index=None, sep=' ')
+        else:
+            df_data_2d.to_csv(self.odometry_2d_output_path, mode='a', header=None, index=None, sep=' ')
+
 
 
 if __name__ == '__main__':

@@ -10,6 +10,7 @@ find_package(std_msgs REQUIRED)
 
 rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/RadarInfo.msg"
+  "msg/LocalMapInfo.msg"
    DEPENDENCIES std_msgs
 )
 
