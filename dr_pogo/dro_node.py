@@ -30,7 +30,7 @@ class DroNode(Node):
         # Subscribe synchronously to the image topic and radar info topic
         self.image_subscription = Subscriber(self, Image, '/boreas/radar_image')
         self.radar_info_subscription = Subscriber(self, RadarInfo, '/boreas/radar_info')
-        self.ts = TimeSynchronizer([self.image_subscription, self.radar_info_subscription], 10)
+        self.ts = TimeSynchronizer([self.image_subscription, self.radar_info_subscription], 20)
         self.ts.registerCallback(self.radarCallback)
 
         # Set the publisher for the odometry
@@ -165,15 +165,15 @@ class DroNode(Node):
         self.odometryStepIfReady()
 
     def odometryStepIfReady(self):
-        if len(self.radar_data_buffer) > 5:
+        if len(self.radar_data_buffer) > 10:
             self.radar_data_buffer.pop(0)
-            self.get_logger().warn("Radar buffer > 5, likely a problem in with IMU data, dropping oldest radar.")
+            self.get_logger().warn("Radar buffer > 10, likely a problem in with IMU data, dropping oldest radar.")
 
         # Check if the first IMU is before the first radar timestamps and the last IMU is after the last radar timestamp
         if len(self.radar_data_buffer) == 0 or len(self.imu_data_buffer) == 0:
             return
         first_radar_time = self.radar_data_buffer[0]['timestamps'][0]
-        last_radar_time = self.radar_data_buffer[0]['timestamps'][-1]
+        last_radar_time = self.radar_data_buffer[0]['timestamps'][-1] + 2000  # Add 1ms to ensure we cover the radar timestamps
         if self.imu_data_buffer[0]['timestamp'] > first_radar_time or self.imu_data_buffer[-1]['timestamp'] < last_radar_time:
             return
         
@@ -193,7 +193,7 @@ class DroNode(Node):
         # Get the odometry results
         current_odometry = self.dro.getPose(self.radar_data_buffer[0]['timestamp'])
         self.get_logger().info(f"Current odometry:\n{current_odometry}")
-        self.publishOdometry(current_odometry)
+        self.publishOdometry(current_odometry, self.radar_data_buffer[0]['timestamp'])
         self.logOdometry(current_odometry, self.radar_data_buffer[0]['timestamp'])
 
         # If use gyro, feed the velocity estimates with the gyro for 3D state estimation
@@ -218,9 +218,10 @@ class DroNode(Node):
 
 
 
-    def publishOdometry(self, pose):
+    def publishOdometry(self, pose, timestamp):
         odom_msg = Odometry()
-        odom_msg.header.stamp = self.get_clock().now().to_msg()
+        odom_msg.header.stamp.sec = int(timestamp // 1e6)
+        odom_msg.header.stamp.nanosec = int((timestamp % 1e6) * 1e3)
         odom_msg.header.frame_id = "odom"
         odom_msg.child_frame_id = "radar"
 
@@ -236,6 +237,8 @@ class DroNode(Node):
         odom_msg.pose.pose.orientation.z = quaternion[2]
         odom_msg.pose.pose.orientation.w = quaternion[3]
         self.odometry_publisher.publish(odom_msg)
+
+        self.get_logger().info(f"Published odometry message with timestamp {timestamp} and pose:\n{pose}")
 
 
     def logOdometry(self, pose, timestamp):
