@@ -6,6 +6,7 @@ import pandas as pd
 import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import Imu, Image
+from nav_msgs.msg import Odometry
 from dr_pogo.msg import RadarInfo
 from cv_bridge import CvBridge
 import cv2
@@ -33,10 +34,14 @@ class BoreasPlayerNode(Node):
             up_chrips = doppler_img[:,10]
             self.next_chirps = up_chrips
 
-    def __init__(self, sequence_path, playback_rate):
+    def __init__(self, sequence_path, playback_rate, no_wait=False):
         super().__init__('boreas_player_node')
 
         self.playback_rate = playback_rate
+        self.no_wait = no_wait
+
+        if no_wait:
+            self.odom_sub = self.create_subscription(Odometry, 'dro_odometry', self.odomCallback, 10)
 
         # Make sure the sequence path exists
         if(not os.path.exists(sequence_path)):
@@ -114,12 +119,22 @@ class BoreasPlayerNode(Node):
         # CV Bridge
         bridge = CvBridge()
 
+        if self.no_wait:
+            self.next_time = self.next_radar.timestamps[-1][0] + 0.5e6  # Set to the end of the radar timestamps to publish all data immediately after receiving the odometry message
 
         # Playback loop
         self.actual_time_origin = time.time() * 1e6  # in microseconds
+        if self.no_wait:
+            data_time_origin = 0.0
+
         loop = True
         while loop:
-            elapsed_actual_time = self.getElapsedTime()
+            if not self.no_wait:
+                elapsed_actual_time = self.getElapsedTime()
+            else:
+                elapsed_actual_time = self.next_time
+                #print("Next radar timestamp: ", self.next_radar.timestamps[-1][0] - data_time_origin, " microseconds")
+
 
 
             if(self.next_radar is not None) and (elapsed_actual_time > (self.next_radar.timestamps[-1][0] - data_time_origin)):
@@ -176,33 +191,29 @@ class BoreasPlayerNode(Node):
                 next_imu_idx += 1
 
             # Sleep for the estimated time until the next event
-            elapsed_actual_time = self.getElapsedTime()
-            time_to_next_imu = float('inf')
-            if next_imu_idx < len(self.imu_timestamps):
-                time_to_next_imu = (self.imu_timestamps[next_imu_idx] - data_time_origin) - elapsed_actual_time
-            time_to_next_radar = float('inf')
-            if self.next_radar is not None:
-                time_to_next_radar = (self.next_radar.timestamps[-1][0] - data_time_origin) - elapsed_actual_time
-            time_to_next_event = min(time_to_next_imu, time_to_next_radar)
-            if time_to_next_event > 0 and time_to_next_event != float('inf'):
-                time.sleep(time_to_next_event / 1e6)  # Convert microseconds to seconds
+            if not self.no_wait:
+                time.sleep(0.001)  # Convert microseconds to seconds
 
             # Check for termination condition            
             if (self.next_radar is None) and (next_imu_idx >= len(self.imu_timestamps)):
                 self.get_logger().info("Finished playing all data.")
                 break
 
-        print("BoreasPlayerNode initialized.")
+            rclpy.spin_once(self, timeout_sec=0.001)
 
+    def odomCallback(self, msg):
+        self.next_time = msg.header.stamp.sec * 1e6 + msg.header.stamp.nanosec * 1e-3 + 1.5e6  # Add 0.5s to ensure we cover the radar timestamps
+        self.get_logger().info(f"Received odometry message, setting next_time to {self.next_time} microseconds")
 
 def main():
     parser = argparse.ArgumentParser(description='Boreas Dataset Player Node')
     parser.add_argument('-p', '--sequence_path', type=str, required=True, help='Path to the Boreas sequence folder')
     parser.add_argument('-r', '--playback_rate', type=float, default=1.0, help='Playback rate (1.0 = real-time)')
+    parser.add_argument('-n', '--no_wait', action='store_true', help='Send all messages as fast as possible after receiving the odometry result, ignoring the timestamps. Useful for testing the odometry evaluation pipeline offline.')
     args = parser.parse_args()
 
     rclpy.init()
-    BoreasPlayerNode(args.sequence_path, args.playback_rate)
+    BoreasPlayerNode(args.sequence_path, args.playback_rate, args.no_wait)
     rclpy.shutdown()
 
 
