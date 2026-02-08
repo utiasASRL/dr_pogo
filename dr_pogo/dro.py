@@ -14,6 +14,7 @@ kDefaultDroOpts = {
         'max_acceleration': 10.0,
         'min_time_bias_init': 1.0,
         'T_axle_radar': np.eye(4),
+        'gyro_bias_alpha': 0.01,
     },
     'gp': {
         'lengthscale_az': 2.0,
@@ -140,13 +141,6 @@ class Dro():
                 self.chirp_up = (radar_data['chirps'][0] == 0)
             else:
                 self.chirp_up = radar_data['chirps'][0] == 0
-
-            if self.use_doppler and self.estimate_vy_bias and (np.linalg.norm(self.state_init[:2].cpu().numpy()) > 3):
-                save_vy_bias = self.vy_bias
-                vel_doppler_only = self.solve(self.state_init, 100, 1e-6, 1e-4, doppler_only=True)
-                self.vy_bias = save_vy_bias
-            else:
-                vel_doppler_only = None
                     
                 
 
@@ -187,21 +181,6 @@ class Dro():
                 pos = rot_mats_transposed@(-prev_scan_pos + frame_pos.reshape((-1,2,1))) 
                 rot = -prev_scan_rot + frame_rot
 
-                # Undistort the polar image to the end of the scan
-                # Please note that this is a "approximation" of the undistortion
-                # (the "proper undistortion" with a continous motion during the
-                # scan is not a trivial task)
-                #if self.save_scans:
-                #    kSkipFirstLastRows = 2
-                #    temp_pos = -rot_mats_transposed @ pos
-                #    temp_rot = -rot
-                #    x, y = self.getCartesianCoordinates(temp_pos, temp_rot)
-                #    if x.shape[1] > self.max_scan_bins:
-                #        x = x[kSkipFirstLastRows:-kSkipFirstLastRows, :self.max_scan_bins]
-                #        y = y[kSkipFirstLastRows:-kSkipFirstLastRows, :self.max_scan_bins]
-                #    scan_to_save = np.concatenate((x.detach().cpu().numpy().reshape((1,-1)), y.detach().cpu().numpy().reshape((1,-1)), prev_shifted[kSkipFirstLastRows:-kSkipFirstLastRows, :x.shape[1]].detach().cpu().numpy().reshape((1,-1))), axis=0).T
-                #    np.save(self.scan_path + "/" + str(timestamps[0]) + ".npy", scan_to_save)
-                    
 
                 polar_coord_corrected = self.polarCoordCorrection(pos, rot)
                 polar_coord_corrected[:,:,0] -= (self.azimuths[0])
@@ -232,20 +211,11 @@ class Dro():
                 else:
                     self.moveLocalMap(frame_pos, frame_rot)
                     self.local_map[self.local_map_mask] = self.one_minus_alpha * self.local_map[self.local_map_mask] + self.alpha * local_map_update[self.local_map_mask]
-                #self.local_map = local_map_update
 
                 # Publish the local map for dr_pogo
                 self.node.publishLocalMap(self.local_map, np.array([self.current_pos[0].item(), self.current_pos[1].item(), self.current_rot.item()]), timestamps[0])
                 if self.save_local_maps:
                     self.node.writeLocalMap(self.local_map, local_map_update_cumulative, np.array([self.current_pos[0].item(), self.current_pos[1].item(), self.current_rot.item()]), timestamps[0])
-                #    lm = (self.local_map.detach().cpu().numpy().clip(0, 1) * 255).astype('uint8')
-
-                #    cv2.imwrite(self.local_map_path + "/" + str(timestamps[0]) + ".png", lm)
-                #    print("Max cumulated return: ", torch.max(local_map_update_cumulative))
-                #    lm = (local_map_update_cumulative.detach().cpu().numpy()).clip(0,255).astype('uint8')
-                #    cv2.imwrite(self.cumulated_returns_path + "/" + str(timestamps[0]) + ".png", lm)
-                #    cv2.imwrite(self.scan_path + "/" + str(timestamps[0]) + ".png", (local_map_update.detach().cpu().numpy().clip(0,1)*255).astype('uint8'))
-
 
 
                 # Blur and normalise the local map
@@ -258,7 +228,7 @@ class Dro():
             if self.use_gyro:
                 self.motion_model.setGyroData(
                     gyro_time = np.array([imu['timestamp'] for imu in imu_data]),
-                    gyro_yaw = np.array([imu['angular_velocity'][2] for imu in imu_data])
+                    gyro_yaw = np.array([imu['angular_velocity'][2] for imu in imu_data]) - self.gyr_bias
                 )
 
             # Query the GP interpolation of the up and down chirp images
@@ -364,7 +334,12 @@ class Dro():
                 self.prev_state = result.clone()
 
             # Update the vy bias if needed
-            if vel_doppler_only is not None and np.linalg.norm(result[:2].cpu().numpy()) > 3.0:
+            if self.use_doppler and self.estimate_vy_bias and np.linalg.norm(result[:2].cpu().numpy()) > 3.0:
+                save_vy_bias = self.vy_bias
+                self.vy_bias = 0.0
+                vel_doppler_only = self.solve(self.state_init, 100, 1e-6, 1e-4, doppler_only=True)[:2]
+                self.vy_bias = save_vy_bias
+
                 vel_doppler_only = np.concatenate((vel_doppler_only.cpu().numpy(), [0]))
                 T_axle_radar = self.opts['estimation']['T_axle_radar']
                 if self.use_gyro:
@@ -375,9 +350,26 @@ class Dro():
                 else:
                     axle_vel = T_axle_radar[:3, :3] @ vel_doppler_only
                 vy = (T_axle_radar[:3,:3].T@(np.array([0, axle_vel[1], 0])))[1]
-                self.vy_bias = 0.01 * vy + (1-0.01) * self.vy_bias
+                self.vy_bias = 0.01 * vy + (0.99) * self.vy_bias
                 print("Updated vy bias: ", self.vy_bias)
 
+            # Update the gyro bias if needed
+            if self.estimate_gyro_bias:
+                velocity_norm = np.linalg.norm(result[:2].cpu().numpy())
+                self.velocities_for_gyro_bias.pop(0)
+                self.velocities_for_gyro_bias.append(velocity_norm)
+                self.mean_gyr.pop(0)
+                self.mean_gyr.append(np.mean([imu['angular_velocity'][2] for imu in imu_data]))
+
+                # Check if all the velocities are under 0.05
+                if all(vel < 0.05 for vel in self.velocities_for_gyro_bias):
+                    if not self.gyr_bias_init:
+                        self.gyr_bias = self.mean_gyr[len(self.mean_gyr)//2]
+                        self.gyr_bias_init = True
+                    else:
+                        self.gyr_bias = self.gyr_bias_alpha * self.mean_gyr[len(self.mean_gyr)//2] + (1 - self.gyr_bias_alpha) * self.gyr_bias
+                print("Gyro bias: ", self.gyr_bias)
+                
 
 
             self.state_init = result.clone()
@@ -446,6 +438,15 @@ class Dro():
             # Doppler range bounds
             self.max_range_idx = int(np.floor(float(self.opts['doppler']['max_range']) / res))
             self.min_range_idx = int(np.ceil(float(self.opts['doppler']['min_range']) / res))
+
+        self.gyr_bias = 0.0
+
+        if self.estimate_gyro_bias:
+            self.gyr_bias_init = False
+            num_velocities_for_gyro_bias = 7
+            self.velocities_for_gyro_bias = [100.0]*num_velocities_for_gyro_bias
+            self.mean_gyr = [0.0]*num_velocities_for_gyro_bias
+            self.gyr_bias_alpha = self.opts['estimation']['gyro_bias_alpha']
 
     def seKernel(self, X1, X2, l_az, l_range):
         temp_X1 = X1.copy()

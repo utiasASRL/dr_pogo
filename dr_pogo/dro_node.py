@@ -186,7 +186,7 @@ class DroNode(Node):
         relevant_imus = self.imu_data_buffer[start_idx:end_idx]
 
         self.get_logger().info(f"Processing radar scan (from {round(first_radar_time*1e-6, 3)} to {round(last_radar_time*1e-6, 3)}) with {len(relevant_imus)} IMU measurements from {round(imu_times[start_idx]*1e-6, 3)} to {round(imu_times[end_idx-1]*1e-6, 3)}")
-        self.get_logger().warn("TODO: Add the proper handling of the gyro data (and bias estimation) in the DRO code")
+
         self.dro.odometryStep(self.radar_data_buffer[0], relevant_imus)
 
 
@@ -198,9 +198,6 @@ class DroNode(Node):
 
         # If use gyro, feed the velocity estimates with the gyro for 3D state estimation
         self.get_logger().warn("TODO: compute the 3D pose")
-
-
-        self.get_logger().info("TODO: Publish the local map and pose")
 
 
         # Clear the first radar

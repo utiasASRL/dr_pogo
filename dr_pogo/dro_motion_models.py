@@ -94,14 +94,6 @@ class ConstBodyVelGyro(MotionModel):
 
         self.initialised = True
 
-    def setGyroBias(self, gyro_bias):
-        self.gyro_yaw = self.gyro_yaw_original - gyro_bias
-
-        self.bin_integral = (self.gyro_yaw[1:] + self.gyro_yaw[:-1])*(self.gyro_time[1:] - self.gyro_time[:-1])/2.0
-        self.coeff = (self.gyro_yaw[1:] - self.gyro_yaw[:-1])/(self.gyro_time[1:] - self.gyro_time[:-1])
-        self.coeff = torch.cat((self.coeff, self.coeff[-1].unsqueeze(0)), dim=0)
-        self.offset = self.gyro_yaw[:-1] - self.coeff[:-1]*self.gyro_time[:-1]
-        self.offset = torch.cat((self.offset, self.offset[-1].unsqueeze(0)), dim=0)
 
     def setTime(self, time, t0):
         if not self.initialised:
