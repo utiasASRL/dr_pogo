@@ -118,13 +118,13 @@ class DroNode(Node):
             os.makedirs(self.odometry_2d_output_path)
             self.odometry_2d_output_path = os.path.join(self.odometry_2d_output_path, seq_ID + '.txt')
 
+            if self.dro_opts['estimation']['use_gyro']:
+                self.odometry_3d_output_path = os.path.join(self.seq_output_folder, "odometry_3d")
+                if os.path.exists(self.odometry_3d_output_path):
+                    os.system('rm -r ' + self.odometry_3d_output_path)
+                os.makedirs(self.odometry_3d_output_path)
+                self.odometry_3d_output_path = os.path.join(self.odometry_3d_output_path, seq_ID + '.txt')
 
-
-        #self.odom_2d_path = os.path.join(self.seq_output_folder, 'odometry_2d')
-        #if os.path.exists(self.odom_2d_path):
-        #    os.system('rm -r ' + self.odom_2d_path)
-        #os.makedirs(self.odom_2d_path)
-        #self.odom_2d_path = os.path.join(self.odom_2d_path, seq_ID + '.txt')
 
         self.initialized = True
 
@@ -247,6 +247,20 @@ class DroNode(Node):
             df_odom.to_csv(self.odometry_output_path, header=None, index=None, sep=' ')
         else:
             df_odom.to_csv(self.odometry_output_path, mode='a', header=None, index=None, sep=' ')
+
+
+    def logOdometry3D(self, poses, timestamps):
+        if poses.shape[0] != timestamps.shape[0]:
+            self.get_logger().error(f"Number of poses {poses.shape[0]} does not match number of timestamps {timestamps.shape[0]}")
+            return
+        poses_inv = np.linalg.inv(poses)
+        data = np.concatenate([timestamps.reshape(-1, 1), poses_inv[:, :3, :].reshape(poses.shape[0], -1)], axis=1)
+        df_odom = pd.DataFrame(data)
+        df_odom[0] = df_odom[0].astype(np.int64)
+        if not os.path.exists(self.odometry_3d_output_path):
+            df_odom.to_csv(self.odometry_3d_output_path, header=None, index=None, sep=' ')
+        else:
+            df_odom.to_csv(self.odometry_3d_output_path, mode='a', header=None, index=None, sep=' ')
 
         
     def publishLocalMap(self, local_map, xy_theta, timestamp):

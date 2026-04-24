@@ -3,6 +3,7 @@ import torchvision
 import numpy as np
 from dro_motion_models import ConstBodyVelGyro, ConstVelConstW
 from sklearn.metrics import pairwise_distances
+from scipy.spatial.transform import Rotation as R
 import cv2
 
 kDefaultDroOpts = {
@@ -66,6 +67,8 @@ class Dro():
             else:
                 self.motion_model = ConstVelConstW(device=self.device)
             self.state_init = self.motion_model.getInitialState()
+
+            self.integrator_3d = GyroVelIntegrator3D(estimate_bias=opts['estimation']['estimate_gyro_bias'])
 
             # Read the estimation options about the biases
             self.estimate_gyro_bias = opts['estimation']['estimate_gyro_bias']
@@ -324,6 +327,9 @@ class Dro():
             if torch.norm(self.state_init[:2]) < 0.75:
                 self.state_init[:] = 0.0
             result = self.solve(self.state_init, 250, 1e-6, 1e-5)
+
+            self.integrator_3d.update(imu_data, np.array([result[0].item(), result[1].item(),0.0]), self.timestamps[0].item(), self.timestamps[-1].item())
+
 
             # Check if the the angular velocity is not too high
             # If it is, we set it to the previous value (preventing potential catastrophic failure)
@@ -1081,3 +1087,99 @@ def maxAngVel(vel):
         a = (min_ang_vel - max_ang_vel) / (max_vel - min_vel)
         b = max_ang_vel - a*min_vel 
         return a*vel_norm + b
+
+
+
+
+class GyroVelIntegrator3D:
+    def __init__(self, min_imu_freq=100.0, estimate_bias=False):
+        self.current_time = -1
+        self.previous_vel = None
+        self.pose = np.eye(4)
+        self.max_delta_time = 1.0 / min_imu_freq
+        self.estimate_bias = estimate_bias
+        self.gyr_bias = np.zeros(3)
+        if self.estimate_bias:
+            num_velocities_for_gyro_bias = 7
+            self.velocities_for_gyro_bias = [0.0]*num_velocities_for_gyro_bias
+            self.mean_gyr = [0.0]*num_velocities_for_gyro_bias
+            self.gyr_bias_alpha = 0.01
+            self.gyr_bias_init = False
+
+
+    def update(self, imu_data, vel, time_start, time_end):
+        if len(imu_data) < 2:
+            raise ValueError("Not enough IMU data to integrate")
+        if self.current_time < 0:
+            self.current_time = time_start
+
+        gyr_times = [data['timestamp'] for data in imu_data]
+        gyr_times = np.array(gyr_times)
+        gyr_data = np.array([data['angular_velocity'] for data in imu_data])
+        gyr_data = gyr_data - self.gyr_bias
+
+        # Interpolate the gyro data at a fixed frequency if the gap between measurements is too large
+        new_gyr_times = []
+        for i in range(len(gyr_times)-1):
+            new_gyr_times.append(gyr_times[i])
+            if gyr_times[i+1] - gyr_times[i] > self.max_delta_time:
+                num_new_points = np.ceil((gyr_times[i+1] - gyr_times[i]) / self.max_delta_time)
+                new_points = np.linspace(gyr_times[i], gyr_times[i+1], num_new_points, endpoint=False)[1:]
+                new_gyr_times.extend(new_points)
+        new_gyr_times.append(gyr_times[-1])
+        new_gyr_times = np.array(new_gyr_times)
+        new_gyr_times = np.concatenate((new_gyr_times, np.array([time_start, time_end, self.current_time])))
+        # Remove duplicates and sort
+        new_gyr_times = np.unique(new_gyr_times)
+        new_gyr_times = new_gyr_times[(new_gyr_times <= time_end) & (new_gyr_times >= self.current_time)]
+        new_gyr_times.sort()
+
+
+        new_gyr_data = np.zeros((len(new_gyr_times), 3))        
+        for i in range(3):
+            new_gyr_data[:, i] = np.interp(new_gyr_times, gyr_times, gyr_data[:, i])
+        
+        gyr_times = new_gyr_times
+        gyr_data = new_gyr_data
+
+
+        # Integrate the gyro data to get the rotation
+        for i in range(len(gyr_times)-1):
+            time = gyr_times[i+1]
+            if time < self.start_time:
+                current_vel = self.previous_vel
+            else:
+                current_vel = vel
+        
+            delta_time = gyr_times[i+1] - gyr_times[i]
+            avg_gyr = (gyr_data[i] + gyr_data[i+1]) / 2
+            delta_R = R.from_rotvec(avg_gyr * delta_time).as_matrix()
+            delta_pos = current_vel * delta_time
+            delta_pose = np.eye(4)
+            delta_pose[0:3, 0:3] = delta_R
+            delta_pose[0:3, 3] = delta_pos
+            self.pose = self.pose @ delta_pose
+        
+        self.previous_vel = vel
+        self.current_time = time_end
+        
+        if self.estimate_bias:
+            velocity_norm = np.linalg.norm(vel)
+            self.velocities_for_gyro_bias.pop(0)
+            self.velocities_for_gyro_bias.append(velocity_norm)
+            self.mean_gyr.pop(0)
+            self.mean_gyr.append(np.mean([imu['angular_velocity'][2] for imu in imu_data]))
+
+            # Check if all the velocities are under 0.05
+            if all(vel < 0.05 for vel in self.velocities_for_gyro_bias):
+                if not self.gyr_bias_init:
+                    self.gyr_bias = self.mean_gyr[len(self.mean_gyr)//2]
+                    self.gyr_bias_init = True
+                else:
+                    self.gyr_bias = self.gyr_bias_alpha * self.mean_gyr[len(self.mean_gyr)//2] + (1 - self.gyr_bias_alpha) * self.gyr_bias
+            print("Gyro bias 3D: ", self.gyr_bias)
+
+
+
+        return self.pose
+        
