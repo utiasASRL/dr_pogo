@@ -68,7 +68,9 @@ class Dro():
                 self.motion_model = ConstVelConstW(device=self.device)
             self.state_init = self.motion_model.getInitialState()
 
-            self.integrator_3d = GyroVelIntegrator3D(estimate_bias=opts['estimation']['estimate_gyro_bias'])
+            self.offset = opts['radar']['range_offset']
+
+            #self.integrator_3d = GyroVelIntegrator3D(estimate_bias=opts['estimation']['estimate_gyro_bias'])
 
             # Read the estimation options about the biases
             self.estimate_gyro_bias = opts['estimation']['estimate_gyro_bias']
@@ -137,6 +139,13 @@ class Dro():
             azimuths = radar_data['azimuths']
             polar_image = radar_data['polar']
             res = radar_data['resolution']
+
+            # Dirty way to account for the offset
+            offset = self.offset / res
+            if offset > 0:
+                polar_image = np.concatenate(np.zeros((polar_image.shape[0], int(np.round(offset)))), polar_image, axis=1)
+            elif offset < 0:
+                polar_image = polar_image[:, int(np.round(-offset)):]
 
 
             # Prepare the chirp direction
@@ -328,7 +337,7 @@ class Dro():
                 self.state_init[:] = 0.0
             result = self.solve(self.state_init, 250, 1e-6, 1e-5)
 
-            self.integrator_3d.update(imu_data, np.array([result[0].item(), result[1].item(),0.0]), self.timestamps[0].item(), self.timestamps[-1].item())
+            #self.integrator_3d.update(imu_data, np.array([result[0].item(), result[1].item(),0.0]), self.timestamps[0].item(), self.timestamps[-1].item())
 
 
             # Check if the the angular velocity is not too high
@@ -1096,7 +1105,7 @@ class GyroVelIntegrator3D:
         self.current_time = -1
         self.previous_vel = None
         self.pose = np.eye(4)
-        self.max_delta_time = 1.0 / min_imu_freq
+        self.max_delta_time = (1.0 / min_imu_freq) * 1e6
         self.estimate_bias = estimate_bias
         self.gyr_bias = np.zeros(3)
         if self.estimate_bias:
@@ -1123,7 +1132,7 @@ class GyroVelIntegrator3D:
         for i in range(len(gyr_times)-1):
             new_gyr_times.append(gyr_times[i])
             if gyr_times[i+1] - gyr_times[i] > self.max_delta_time:
-                num_new_points = np.ceil((gyr_times[i+1] - gyr_times[i]) / self.max_delta_time)
+                num_new_points = np.ceil((gyr_times[i+1] - gyr_times[i]) / self.max_delta_time).astype(int)
                 new_points = np.linspace(gyr_times[i], gyr_times[i+1], num_new_points, endpoint=False)[1:]
                 new_gyr_times.extend(new_points)
         new_gyr_times.append(gyr_times[-1])

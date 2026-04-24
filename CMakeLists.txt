@@ -8,6 +8,24 @@ find_package(rosidl_default_generators REQUIRED)
 
 find_package(std_msgs REQUIRED)
 
+install(PROGRAMS
+  dr_pogo/boreas_player.py
+  DESTINATION lib/${PROJECT_NAME}
+  RENAME boreas_player
+)
+
+install(PROGRAMS
+  dr_pogo/dro_node.py
+  DESTINATION lib/${PROJECT_NAME}
+  RENAME dro_node
+)
+
+install(FILES
+  dr_pogo/dro.py
+  dr_pogo/dro_motion_models.py
+  DESTINATION lib/${PROJECT_NAME}
+)
+
 rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/RadarInfo.msg"
   "msg/LocalMapInfo.msg"

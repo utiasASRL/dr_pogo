@@ -1,3 +1,5 @@
+#!/usr/bin/env python3
+
 # Script to interface the boreas dataset with ROS2
 # Read the IMU and radar data and publish them as ROS2 topics (standard IMU and image messages + custom radar info message)
 # Options are the playback rate and the path to the sequence folder
