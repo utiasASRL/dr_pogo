@@ -130,10 +130,10 @@ class Dro():
 
     def odometryStep(self, radar_data, imu_data):
     
-        if self.initialized == False:
-            self.initialize(radar_data)
 
         with torch.no_grad():
+            if self.initialized == False:
+                self.initialize(radar_data)
             # Prepare the radar data from the input
             timestamps = radar_data['timestamps']
             azimuths = radar_data['azimuths']
@@ -399,161 +399,93 @@ class Dro():
 
 
     def initialize(self, radar_data):
-        self.initialized = True
-        res = radar_data['resolution']
-        self.vel_to_bin = 2*self.radar_beta / res
+        with torch.no_grad():
+            self.initialized = True
+            res = radar_data['resolution']
+            self.vel_to_bin = 2*self.radar_beta / res
 
-        self.max_range_idx_direct = torch.tensor(int(np.floor(self.opts['direct']['max_range'] / res))).to(self.device)
-        self.min_range_idx_direct = torch.tensor(int(np.ceil(self.opts['direct']['min_range'] / res))).to(self.device)
+            self.max_range_idx_direct = torch.tensor(int(np.floor(self.opts['direct']['max_range'] / res))).to(self.device)
+            self.min_range_idx_direct = torch.tensor(int(np.ceil(self.opts['direct']['min_range'] / res))).to(self.device)
 
-        # Doppler shift to range
-        self.shift_to_range = torch.tensor(res / 2.0).to(self.device)
-        self.range_vec = torch.arange(self.max_range_idx_direct).to(self.device).float() * res + (res/2.0)
+            # Doppler shift to range
+            self.shift_to_range = torch.tensor(res / 2.0).to(self.device)
+            self.range_vec = torch.arange(self.max_range_idx_direct).to(self.device).float() * res + (res/2.0)
 
-        if self.isDopplerEnabled(radar_data):
-            self.use_doppler = True
+            if self.isDopplerEnabled(radar_data):
+                self.use_doppler = True
 
-            range_start = int(np.ceil(float(self.opts['doppler']['min_range']) / res))
-            range_end = int(np.floor(float(self.opts['doppler']['max_range']) / res))
-            self.nb_bins = range_end - range_start + 1 + 2*self.kImgPadding
+                range_start = int(np.ceil(float(self.opts['doppler']['min_range']) / res))
+                range_end = int(np.floor(float(self.opts['doppler']['max_range']) / res))
+                self.nb_bins = range_end - range_start + 1 + 2*self.kImgPadding
 
-            # Prepare the GP convolutions for the image interlacing
-            x = np.arange(-self.size_az, self.size_az+1)
-            mask_smooth = x%2 == 0
-            mask_interp = x%2 != 0
-            x_smooth = x[mask_smooth].astype(np.float32)
-            x_interp = x[mask_interp].astype(np.float32)
-            y = np.arange(-self.size_range, self.size_range+1)
-            XX_smooth, YY_smooth = np.meshgrid(x_smooth, y)
-            XX_interp, YY_interp = np.meshgrid(x_interp, y)
-            self.X_smooth = np.vstack((XX_smooth.T.flatten(), YY_smooth.T.flatten())).T
-            self.X_interp = np.vstack((XX_interp.T.flatten(), YY_interp.T.flatten())).T
+                # Prepare the GP convolutions for the image interlacing
+                x = np.arange(-self.size_az, self.size_az+1)
+                mask_smooth = x%2 == 0
+                mask_interp = x%2 != 0
+                x_smooth = x[mask_smooth].astype(np.float32)
+                x_interp = x[mask_interp].astype(np.float32)
+                y = np.arange(-self.size_range, self.size_range+1)
+                XX_smooth, YY_smooth = np.meshgrid(x_smooth, y)
+                XX_interp, YY_interp = np.meshgrid(x_interp, y)
+                self.X_smooth = np.vstack((XX_smooth.T.flatten(), YY_smooth.T.flatten())).T
+                self.X_interp = np.vstack((XX_interp.T.flatten(), YY_interp.T.flatten())).T
 
-            sz = float(self.opts['gp']['sz'])
-            n_smooth = self.X_smooth.shape[0]
-            K_smooth = self.seKernel(self.X_smooth, self.X_smooth, self.l_az, self.l_range) + sz**2*np.eye(n_smooth)
-            Kinv_smooth = np.linalg.inv(K_smooth)
-            ks_smooth = self.seKernel(np.array([[0, 0]]), self.X_smooth, self.l_az, self.l_range)
-            self.beta_smooth = (ks_smooth@Kinv_smooth).flatten()
+                sz = float(self.opts['gp']['sz'])
+                n_smooth = self.X_smooth.shape[0]
+                K_smooth = self.seKernel(self.X_smooth, self.X_smooth, self.l_az, self.l_range) + sz**2*np.eye(n_smooth)
+                Kinv_smooth = np.linalg.inv(K_smooth)
+                ks_smooth = self.seKernel(np.array([[0, 0]]), self.X_smooth, self.l_az, self.l_range)
+                self.beta_smooth = (ks_smooth@Kinv_smooth).flatten()
 
-            n_interp = self.X_interp.shape[0]
-            K_interp = self.seKernel(self.X_interp, self.X_interp, self.l_az, self.l_range) + sz**2*np.eye(n_interp)
-            Kinv_interp = np.linalg.inv(K_interp)
-            ks_interp = self.seKernel(np.array([[0, 0]]), self.X_interp, self.l_az, self.l_range)
-            self.beta_interp = (ks_interp@Kinv_interp).flatten()
+                n_interp = self.X_interp.shape[0]
+                K_interp = self.seKernel(self.X_interp, self.X_interp, self.l_az, self.l_range) + sz**2*np.eye(n_interp)
+                Kinv_interp = np.linalg.inv(K_interp)
+                ks_interp = self.seKernel(np.array([[0, 0]]), self.X_interp, self.l_az, self.l_range)
+                self.beta_interp = (ks_interp@Kinv_interp).flatten()
 
-            self.beta_smooth_torch_conv = torch.nn.Conv2d(1, 1, (len(x_smooth), len(y)), bias=False, padding=(len(x_smooth)//2, len(y)//2))
-            beta_smooth_tensor = torch.tensor(self.beta_smooth.reshape((1, 1, len(x_smooth), len(y))).astype(np.float32)).to(self.device)
-            self.beta_smooth_torch_conv.weight = torch.nn.Parameter(beta_smooth_tensor)
-            self.beta_interp_torch_conv = torch.nn.Conv2d(1, 1, (len(x_interp), len(y)), bias=False, padding=(len(x_interp)//2, len(y)//2))
-            beta_interp_tensor = torch.tensor(self.beta_interp.reshape((1, 1, len(x_interp), len(y))).astype(np.float32)).to(self.device)
-            self.beta_interp_torch_conv.weight = torch.nn.Parameter(beta_interp_tensor)
+                self.beta_smooth_torch_conv = torch.nn.Conv2d(1, 1, (len(x_smooth), len(y)), bias=False, padding=(len(x_smooth)//2, len(y)//2))
+                beta_smooth_tensor = torch.tensor(self.beta_smooth.reshape((1, 1, len(x_smooth), len(y))).astype(np.float32)).to(self.device)
+                self.beta_smooth_torch_conv.weight = torch.nn.Parameter(beta_smooth_tensor)
+                self.beta_interp_torch_conv = torch.nn.Conv2d(1, 1, (len(x_interp), len(y)), bias=False, padding=(len(x_interp)//2, len(y)//2))
+                beta_interp_tensor = torch.tensor(self.beta_interp.reshape((1, 1, len(x_interp), len(y))).astype(np.float32)).to(self.device)
+                self.beta_interp_torch_conv.weight = torch.nn.Parameter(beta_interp_tensor)
 
 
-            # Doppler range bounds
-            self.max_range_idx = int(np.floor(float(self.opts['doppler']['max_range']) / res))
-            self.min_range_idx = int(np.ceil(float(self.opts['doppler']['min_range']) / res))
+                # Doppler range bounds
+                self.max_range_idx = int(np.floor(float(self.opts['doppler']['max_range']) / res))
+                self.min_range_idx = int(np.ceil(float(self.opts['doppler']['min_range']) / res))
 
-        self.gyr_bias = 0.0
+            self.gyr_bias = 0.0
 
-        if self.estimate_gyro_bias:
-            self.gyr_bias_init = False
-            num_velocities_for_gyro_bias = 7
-            self.velocities_for_gyro_bias = [100.0]*num_velocities_for_gyro_bias
-            self.mean_gyr = [0.0]*num_velocities_for_gyro_bias
-            self.gyr_bias_alpha = self.opts['estimation']['gyro_bias_alpha']
+            if self.estimate_gyro_bias:
+                self.gyr_bias_init = False
+                num_velocities_for_gyro_bias = 7
+                self.velocities_for_gyro_bias = [100.0]*num_velocities_for_gyro_bias
+                self.mean_gyr = [0.0]*num_velocities_for_gyro_bias
+                self.gyr_bias_alpha = self.opts['estimation']['gyro_bias_alpha']
 
     def seKernel(self, X1, X2, l_az, l_range):
-        temp_X1 = X1.copy()
-        temp_X2 = X2.copy()
-        temp_X1[:, 0] = temp_X1[:, 0] / l_az
-        temp_X2[:, 0] = temp_X2[:, 0] / l_az
-        temp_X1[:, 1] = temp_X1[:, 1] / l_range
-        temp_X2[:, 1] = temp_X2[:, 1] / l_range
-        dist = pairwise_distances(X1, X2, metric='sqeuclidean')
-        return np.exp(-dist/2)
+        with torch.no_grad():
+            temp_X1 = X1.copy()
+            temp_X2 = X2.copy()
+            temp_X1[:, 0] = temp_X1[:, 0] / l_az
+            temp_X2[:, 0] = temp_X2[:, 0] / l_az
+            temp_X1[:, 1] = temp_X1[:, 1] / l_range
+            temp_X2[:, 1] = temp_X2[:, 1] / l_range
+            dist = pairwise_distances(X1, X2, metric='sqeuclidean')
+            return np.exp(-dist/2)
 
 
 
     # Get the polar images from the input image using the GP interpolation
     def getUpDownPolarImages(self, img):
-        mean_even = np.mean(img[::2, :])
-        mean_odd = np.mean(img[1::2, :])
-        in_even = img[::2, :] - mean_even
-        in_odd = img[1::2, :] - mean_odd
-
         # Prepare the input for the torch convolution
         with torch.no_grad():
-            in_even_device = torch.tensor(in_even).unsqueeze(0).unsqueeze(0).to(self.device)
-            in_odd_device = torch.tensor(in_odd).unsqueeze(0).unsqueeze(0).to(self.device)
+            mean_even = np.mean(img[::2, :])
+            mean_odd = np.mean(img[1::2, :])
+            in_even = img[::2, :] - mean_even
+            in_odd = img[1::2, :] - mean_odd
 
-            even_smooth_torch = self.beta_smooth_torch_conv(in_even_device)
-            even_interp_torch = self.beta_interp_torch_conv(in_even_device)
-            odd_smooth_torch = self.beta_smooth_torch_conv(in_odd_device)
-            odd_interp_torch = self.beta_interp_torch_conv(in_odd_device)
-            # Remove extra rows if the output of the convolution is larger than the input
-            if even_smooth_torch.shape[2] > in_even.shape[0]:
-                even_smooth_torch = even_smooth_torch[:, :, :-1, :]
-            if even_interp_torch.shape[2] > in_even.shape[0]:
-                even_interp_torch = even_interp_torch[:, :, :-1, :]
-            if odd_smooth_torch.shape[2] > in_odd.shape[0]:
-                odd_smooth_torch = odd_smooth_torch[:, :, :-1, :]
-            if odd_interp_torch.shape[2] > in_odd.shape[0]:
-                odd_interp_torch = odd_interp_torch[:, :, :-1, :]
-
-            out_even = torch.zeros((1, 1, img.shape[0], img.shape[1]), dtype=torch.float32).to(self.device)
-            out_odd = torch.zeros((1, 1, img.shape[0], img.shape[1]), dtype=torch.float32).to(self.device)
-            out_even[:, :, ::2, :] = even_smooth_torch
-            out_even[:, :, 1:-1:2, :] = even_interp_torch[:, :, 1:, :]
-            out_odd[:, :, ::2, :] = odd_interp_torch
-            out_odd[:, :, 1::2, :] = odd_smooth_torch
-            out_odd[:, :, -1, :] = 0
-
-
-            # Get standard deviation of each image (under the median)
-            even_std = torch.std(out_even, dim=3, keepdim=True)
-            odd_std = torch.std(out_odd)
-            odd_std = torch.std(out_odd, dim=3, keepdim=True)
-            out_even -= 2.0*even_std
-            out_odd -= 2.0*odd_std
-            out_even[out_even < 0] = 0
-            out_odd[out_odd < 0] = 0
-
-            # Add gaussian blur to the images
-            out_even = torchvision.transforms.functional.gaussian_blur(out_even, (9,1), 3)
-            out_odd = torchvision.transforms.functional.gaussian_blur(out_odd, (9,1), 3)
-
-            # Normalise each row by the maximum value
-            out_even = out_even / torch.max(out_even, dim=3, keepdim=True)[0]
-            out_odd = out_odd / torch.max(out_odd, dim=3, keepdim=True)[0]
-
-            # Replace NaN values by 0
-            out_even[torch.isnan(out_even)] = 0
-            out_odd[torch.isnan(out_odd)] = 0
-
-            out_even = out_even.squeeze()
-            out_odd = out_odd.squeeze()
-
-            out_even[:self.size_az, :] = 0
-            out_even[-self.size_az:, :] = 0
-            out_odd[:self.size_az, :] = 0
-            out_odd[-self.size_az:, :] = 0
-            out_even[:, :self.size_range] = 0
-            out_even[:, -self.size_range:] = 0
-            out_odd[:, :self.size_range] = 0
-            out_odd[:, -self.size_range:] = 0
-
-            return out_odd, out_even
-
-    # Get the polar images from the input image using the GP interpolation
-    def getUpDownPolarImages(self, img):
-        mean_even = np.mean(img[::2, :])
-        mean_odd = np.mean(img[1::2, :])
-        in_even = img[::2, :] - mean_even
-        in_odd = img[1::2, :] - mean_odd
-
-        # Prepare the input for the torch convolution
-        with torch.no_grad():
             in_even_device = torch.tensor(in_even).unsqueeze(0).unsqueeze(0).to(self.device)
             in_odd_device = torch.tensor(in_odd).unsqueeze(0).unsqueeze(0).to(self.device)
 
@@ -1007,17 +939,19 @@ class Dro():
 
     # Helper function to get the local map indices from the cartesian coordinates
     def cartToLocalMapID(self, xy):
-        out = torch.empty_like(xy, device=self.device)
-        out[:,:,0,0] = (xy[:,:,0,0] / (-self.local_map_res)) + self.local_map_zero_idx
-        out[:,:,1,0] = (xy[:,:,1,0] / (self.local_map_res)) + self.local_map_zero_idx
-        return out
+        with torch.no_grad():
+            out = torch.empty_like(xy, device=self.device)
+            out[:,:,0,0] = (xy[:,:,0,0] / (-self.local_map_res)) + self.local_map_zero_idx
+            out[:,:,1,0] = (xy[:,:,1,0] / (self.local_map_res)) + self.local_map_zero_idx
+            return out
 
     # Same as cartToLocalMapID_ but for the sparse case
     def cartToLocalMapIDSparse(self, xy):
-        out = torch.empty_like(xy, device=self.device)
-        out[:,0,0] = (xy[:,0,0] / (-self.local_map_res)) + self.local_map_zero_idx
-        out[:,1,0] = (xy[:,1,0] / (self.local_map_res)) + self.local_map_zero_idx
-        return out
+        with torch.no_grad():
+            out = torch.empty_like(xy, device=self.device)
+            out[:,0,0] = (xy[:,0,0] / (-self.local_map_res)) + self.local_map_zero_idx
+            out[:,1,0] = (xy[:,1,0] / (self.local_map_res)) + self.local_map_zero_idx
+            return out
 
 
 
@@ -1045,38 +979,41 @@ class Dro():
 
     # Get the Doppler velocity separately from the odometry step for the tuning of lateral velocity bias
     def getDopplerVelocity(self):
-        if not self.use_doppler:
-            raise ValueError("Doppler not used")
-        result = self.solve(self.state_init, 250, 1e-6, 1e-5, doppler_only=True)
-        return result[:2].detach().cpu().numpy()
+        with torch.no_grad():
+            if not self.use_doppler:
+                raise ValueError("Doppler not used")
+            result = self.solve(self.state_init, 250, 1e-6, 1e-5, doppler_only=True)
+            return result[:2].detach().cpu().numpy()
 
     # Pull the state estimate
     def getAzPosRot(self):
-        rot_mat = torch.tensor([[torch.cos(self.current_rot), -torch.sin(self.current_rot)], [torch.sin(self.current_rot), torch.cos(self.current_rot)]]).to(self.device)
+        with torch.no_grad():
+            rot_mat = torch.tensor([[torch.cos(self.current_rot), -torch.sin(self.current_rot)], [torch.sin(self.current_rot), torch.cos(self.current_rot)]]).to(self.device)
 
-        _, scan_pos, scan_rot = self.motion_model.getVelPosRot(self.state_init, with_jac=False)
-        pos = rot_mat @ scan_pos.double() + self.current_pos.unsqueeze(1)
-        rot = scan_rot.double() + self.current_rot
+            _, scan_pos, scan_rot = self.motion_model.getVelPosRot(self.state_init, with_jac=False)
+            pos = rot_mat @ scan_pos.double() + self.current_pos.unsqueeze(1)
+            rot = scan_rot.double() + self.current_rot
 
-        return pos.detach().cpu().numpy(), rot.detach().cpu().numpy()
+            return pos.detach().cpu().numpy(), rot.detach().cpu().numpy()
 
     def getPose(self, time):
-        frame_pos, frame_rot = self.motion_model.getPosRotSingle(self.state_init, time)
-        frame_pos = frame_pos.detach().cpu().numpy().astype(np.float64)
-        frame_rot = frame_rot.detach().cpu().numpy().astype(np.float64)
+        with torch.no_grad():
+            frame_pos, frame_rot = self.motion_model.getPosRotSingle(self.state_init, time)
+            frame_pos = frame_pos.detach().cpu().numpy().astype(np.float64)
+            frame_rot = frame_rot.detach().cpu().numpy().astype(np.float64)
 
-        c_rot = np.cos(self.current_rot.detach().cpu().numpy().astype(np.float64))
-        s_rot = np.sin(self.current_rot.detach().cpu().numpy().astype(np.float64))
-        rot_mat = np.array([[c_rot, -s_rot], [s_rot, c_rot]])
-        pos = (rot_mat @ frame_pos.T).T + self.current_pos.detach().cpu().numpy().astype(np.float64)
-        rot = frame_rot + self.current_rot.detach().cpu().numpy().astype(np.float64)
-        pose = np.zeros((4,4), dtype=np.float64)
-        pose[0:2,0:2] = np.array([[np.cos(rot), -np.sin(rot)], [np.sin(rot), np.cos(rot)]])
-        pose[0:2,3] = pos
-        pose[2,2] = 1.0
-        pose[3,3] = 1.0
+            c_rot = np.cos(self.current_rot.detach().cpu().numpy().astype(np.float64))
+            s_rot = np.sin(self.current_rot.detach().cpu().numpy().astype(np.float64))
+            rot_mat = np.array([[c_rot, -s_rot], [s_rot, c_rot]])
+            pos = (rot_mat @ frame_pos.T).T + self.current_pos.detach().cpu().numpy().astype(np.float64)
+            rot = frame_rot + self.current_rot.detach().cpu().numpy().astype(np.float64)
+            pose = np.zeros((4,4), dtype=np.float64)
+            pose[0:2,0:2] = np.array([[np.cos(rot), -np.sin(rot)], [np.sin(rot), np.cos(rot)]])
+            pose[0:2,3] = pos
+            pose[2,2] = 1.0
+            pose[3,3] = 1.0
 
-        return pose
+            return pose
 
 
 

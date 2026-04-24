@@ -15,6 +15,7 @@ from scipy.spatial.transform import Rotation as R
 import pandas as pd
 import cv2
 from cv_bridge import CvBridge
+import time
 
 class DroNode(Node):
     def __init__(self):
@@ -188,7 +189,10 @@ class DroNode(Node):
 
         self.get_logger().info(f"Processing radar scan (from {round(first_radar_time*1e-6, 3)} to {round(last_radar_time*1e-6, 3)}) with {len(relevant_imus)} IMU measurements from {round(imu_times[start_idx]*1e-6, 3)} to {round(imu_times[end_idx-1]*1e-6, 3)}")
 
+        t1 = time.time()
         self.dro.odometryStep(self.radar_data_buffer[0], relevant_imus)
+        t2 = time.time()
+        self.get_logger().info(f"DRO odometry step took {round(t2-t1, 3)} seconds")
 
 
         # Get the odometry results
