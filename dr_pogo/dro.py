@@ -4,7 +4,6 @@ import numpy as np
 from dro_motion_models import ConstBodyVelGyro, ConstVelConstW
 from sklearn.metrics import pairwise_distances
 from scipy.spatial.transform import Rotation as R
-import cv2
 
 kDefaultDroOpts = {
     'estimation': {
@@ -113,7 +112,7 @@ class Dro():
             self.one_minus_alpha = torch.tensor(1 - local_map_update_alpha).to(self.device)
             self.alpha = torch.tensor(local_map_update_alpha).to(self.device)
 
-
+            self.max_range_local_map = np.sqrt(2)*max_local_map_range
 
             self.current_rot = torch.tensor(0.0).to(self.device).double()
             self.current_pos = torch.zeros(2).to(self.device).double()
@@ -161,6 +160,7 @@ class Dro():
                 self.max_diff_vel = self.max_acc * (timestamps[-1] - timestamps[0]) * 10e-6
             self.timestamps = torch.tensor(timestamps).to(self.device).squeeze()
             delta_time = 0.25#(self.timestamps[0] - last_scan_time)*10e-6
+            
 
             # Update the pose and the local map
             if self.step_counter > 0:
@@ -185,8 +185,11 @@ class Dro():
                 if self.use_doppler:
                     per_line_shift[1::2] *= -1
                 
+
                 # Correct for the Doppler shift
-                prev_shifted = self.perLineInterpolation(self.polar_intensity, per_line_shift)
+                max_id = int(self.max_range_local_map / res)
+                prev_shifted = self.perLineInterpolation(self.polar_intensity[:,:max_id], per_line_shift)
+
 
                 rot_mats_transposed = torch.concatenate((torch.cos(prev_scan_rot), torch.sin(prev_scan_rot), -torch.sin(prev_scan_rot), torch.cos(prev_scan_rot)), dim=1).reshape((-1,2,2))
                 prev_scan_pos = prev_scan_pos.reshape((-1,2,1))
@@ -291,7 +294,6 @@ class Dro():
             self.polar_intensity = torchvision.transforms.functional.gaussian_blur(self.polar_intensity.unsqueeze(0), (9,1), 3).squeeze()
             self.polar_intensity /= torch.max(self.polar_intensity, dim=1, keepdim=True)[0]
             self.polar_intensity[torch.isnan(self.polar_intensity)] = 0
-            
 
             # Preparation for the future localMap update (at the loop)
             range_vec = torch.arange(self.max_range_idx).to(self.device).float() * res + (res*0.5)

@@ -37,8 +37,8 @@ gp:
   sz: 0.6
 log:
   display: false
-  save_images: true
-  save_local_maps: true
+  save_images: false
+  save_local_maps: false
   verbose: true
   save_scans: false
   max_scan_range: 120.0
