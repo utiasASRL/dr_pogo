@@ -24,6 +24,8 @@ setup(
     entry_points={
         "console_scripts": [
             "boreas_player = dr_pogo.boreas_player:main",
+            "dro_node = dr_pogo.dro_node:main",
+            "raplace_node = dr_pogo.raplace_node:main",
         ],
     },
 )

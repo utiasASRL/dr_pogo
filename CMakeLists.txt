@@ -20,6 +20,12 @@ install(PROGRAMS
   RENAME dro_node
 )
 
+install(PROGRAMS
+  dr_pogo/raplace_node.py
+  DESTINATION lib/${PROJECT_NAME}
+  RENAME raplace_node
+)
+
 install(FILES
   dr_pogo/dro.py
   dr_pogo/dro_motion_models.py
@@ -29,6 +35,7 @@ install(FILES
 rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/RadarInfo.msg"
   "msg/LocalMapInfo.msg"
+  "msg/LoopCandidate.msg"
    DEPENDENCIES std_msgs
 )
 
@@ -39,6 +46,10 @@ install(FILES package.xml
 )
 
 install(DIRECTORY launch
+  DESTINATION share/${PROJECT_NAME}
+)
+
+install(DIRECTORY config
   DESTINATION share/${PROJECT_NAME}
 )
 

@@ -1,0 +1,4 @@
+#dist_thr: 20 # Distance threshold for selecting local maps
+min_time_diff: 60  # Minimum time difference target and query local maps in seconds
+max_odom_drift: 0.01 # Maximum admissible odometry drift (ratio of the error versus travelled distance)
+max_img_size: 600

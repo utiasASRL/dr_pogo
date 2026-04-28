@@ -14,7 +14,6 @@ import os
 from scipy.spatial.transform import Rotation as R
 import pandas as pd
 import cv2
-from cv_bridge import CvBridge
 import time
 
 class DroNode(Node):
@@ -39,7 +38,6 @@ class DroNode(Node):
         self.odometry_publisher = self.create_publisher(Odometry, 'dro_odometry', 10)
 
         # Set the local map publishers
-        self.bridge = CvBridge()
         self.local_map_image_publisher = self.create_publisher(Image, 'dro_local_map_image', 10)
         self.local_map_info_publisher = self.create_publisher(LocalMapInfo, 'dro_local_map_info', 10)
 
@@ -269,12 +267,34 @@ class DroNode(Node):
 
         
     def publishLocalMap(self, local_map, xy_theta, timestamp):
-        local_map_image_msg = self.bridge.cv2_to_imgmsg((local_map.detach().cpu().numpy()).astype(np.float32), encoding="32FC1")
+        t1 = time.time()
+        if hasattr(local_map, "detach"):
+            local_map_np = local_map.detach().cpu().numpy()
+        else:
+            local_map_np = np.asarray(local_map)
+
+        if local_map_np.dtype != np.float32:
+            local_map_np = local_map_np.astype(np.float32, copy=False)
+        local_map_np = np.ascontiguousarray(local_map_np)
+
+        local_map_image_msg = Image()
         local_map_image_msg.header.stamp.sec = int(timestamp // 1e6)
         local_map_image_msg.header.stamp.nanosec = int((timestamp % 1e6) * 1e3)
         local_map_image_msg.header.frame_id = "radar"
+        local_map_image_msg.height = int(local_map_np.shape[0])
+        local_map_image_msg.width = int(local_map_np.shape[1])
+        local_map_image_msg.encoding = "32FC1"
+        local_map_image_msg.is_bigendian = False
+        local_map_image_msg.step = int(local_map_np.shape[1] * 4)
+        local_map_image_msg.data = local_map_np.tobytes()
+        t2 = time.time()
+        self.get_logger().info(f"Converted local map to Image message with timestamp {timestamp}, took {round(t2-t1, 3)} seconds")
+        t1 = time.time()
         self.local_map_image_publisher.publish(local_map_image_msg)
+        t2 = time.time()
+        self.get_logger().info(f"Published local map image with timestamp {timestamp}, took {round(t2-t1, 3)} seconds")
 
+        t1 = time.time()
         map_info_msg = LocalMapInfo()
         map_info_msg.header = local_map_image_msg.header
         map_info_msg.x = xy_theta[0]
@@ -282,6 +302,8 @@ class DroNode(Node):
         map_info_msg.theta = xy_theta[2]
         map_info_msg.resolution = self.dro_opts['direct']['local_map_res']
         self.local_map_info_publisher.publish(map_info_msg)
+        t2 = time.time()
+        self.get_logger().info(f"Published local map info with timestamp {timestamp}, took {round(t2-t1, 3)} seconds")
 
 
     def writeLocalMap(self, local_map, cumulated_returns, xy_theta, timestamp):

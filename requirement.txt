@@ -1,0 +1,15 @@
+# Python dependencies for this repository (installed via pip)
+numpy
+pandas
+scipy
+scikit-learn
+scikit-image
+opencv-python
+matplotlib
+PyYAML
+pyboreas
+torch
+torchvision
+
+# ROS2 dependencies such as rclpy, sensor_msgs, nav_msgs, message_filters,
+# and cv_bridge are provided by your ROS2 installation, not pip.
