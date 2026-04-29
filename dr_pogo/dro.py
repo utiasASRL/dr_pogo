@@ -228,9 +228,10 @@ class Dro():
                     self.local_map[self.local_map_mask] = self.one_minus_alpha * self.local_map[self.local_map_mask] + self.alpha * local_map_update[self.local_map_mask]
 
                 # Publish the local map for dr_pogo
-                self.node.publishLocalMap(self.local_map, np.array([self.current_pos[0].item(), self.current_pos[1].item(), self.current_rot.item()]), timestamps[0])
+                to_publish_local_map = (self.local_map.clip(0, 1) * 255.0).to(torch.uint8).detach().cpu().numpy()
+                self.node.publishLocalMap(to_publish_local_map, np.array([self.current_pos[0].item(), self.current_pos[1].item(), self.current_rot.item()]), timestamps[0])
                 if self.save_local_maps:
-                    self.node.writeLocalMap(self.local_map, local_map_update_cumulative, np.array([self.current_pos[0].item(), self.current_pos[1].item(), self.current_rot.item()]), timestamps[0])
+                    self.node.writeLocalMap(to_publish_local_map, local_map_update_cumulative, np.array([self.current_pos[0].item(), self.current_pos[1].item(), self.current_rot.item()]), timestamps[0])
 
 
                 # Blur and normalise the local map

@@ -26,6 +26,12 @@ install(PROGRAMS
   RENAME raplace_node
 )
 
+install(PROGRAMS
+  dr_pogo/registration_node.py
+  DESTINATION lib/${PROJECT_NAME}
+  RENAME registration_node
+)
+
 install(FILES
   dr_pogo/dro.py
   dr_pogo/dro_motion_models.py

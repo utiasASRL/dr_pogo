@@ -52,6 +52,9 @@ class DroNode(Node):
 
         # Load the config file and populate the DRO options
         config_file_path = "config/config_dro.yaml"
+        base_path = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+        config_file_path = os.path.join(base_path, "share/dr_pogo", config_file_path)
+        print(f"Loading DRO configuration from {config_file_path}")
         with open(config_file_path, 'r') as file:
             config = yaml.safe_load(file)
         dro_opts = copy.deepcopy(kDefaultDroOpts)
@@ -266,27 +269,24 @@ class DroNode(Node):
             df_odom.to_csv(self.odometry_3d_output_path, mode='a', header=None, index=None, sep=' ')
 
         
+    # Input local map needs to be in [0, 255] uint8 format np array
     def publishLocalMap(self, local_map, xy_theta, timestamp):
         t1 = time.time()
-        if hasattr(local_map, "detach"):
-            local_map_np = local_map.detach().cpu().numpy()
-        else:
-            local_map_np = np.asarray(local_map)
+        if local_map.dtype != np.uint8:
+            self.get_logger().error(f"Local map numpy array has dtype {local_map.dtype}, expected uint8.")
+            return
 
-        if local_map_np.dtype != np.float32:
-            local_map_np = local_map_np.astype(np.float32, copy=False)
-        local_map_np = np.ascontiguousarray(local_map_np)
 
         local_map_image_msg = Image()
         local_map_image_msg.header.stamp.sec = int(timestamp // 1e6)
         local_map_image_msg.header.stamp.nanosec = int((timestamp % 1e6) * 1e3)
         local_map_image_msg.header.frame_id = "radar"
-        local_map_image_msg.height = int(local_map_np.shape[0])
-        local_map_image_msg.width = int(local_map_np.shape[1])
-        local_map_image_msg.encoding = "32FC1"
+        local_map_image_msg.height = int(local_map.shape[0])
+        local_map_image_msg.width = int(local_map.shape[1])
+        local_map_image_msg.encoding = "mono8"
         local_map_image_msg.is_bigendian = False
-        local_map_image_msg.step = int(local_map_np.shape[1] * 4)
-        local_map_image_msg.data = local_map_np.tobytes()
+        local_map_image_msg.step = int(local_map.shape[1] * local_map.itemsize)
+        local_map_image_msg.data = local_map.tobytes()
         t2 = time.time()
         self.get_logger().info(f"Converted local map to Image message with timestamp {timestamp}, took {round(t2-t1, 3)} seconds")
         t1 = time.time()

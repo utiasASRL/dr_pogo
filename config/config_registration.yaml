@@ -1,0 +1,3 @@
+lowe_ratio: 0.7
+ransac_thr: 3.0
+max_img_size: 750

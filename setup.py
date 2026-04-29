@@ -26,6 +26,7 @@ setup(
             "boreas_player = dr_pogo.boreas_player:main",
             "dro_node = dr_pogo.dro_node:main",
             "raplace_node = dr_pogo.raplace_node:main",
+            "registration_node = dr_pogo.registration_node:main",
         ],
     },
 )

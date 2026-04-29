@@ -16,3 +16,6 @@ float64 min_dist
 # Saved image paths for query and candidate
 string query_image_path
 string candidate_image_path
+
+# Local map resolution
+float64 resolution
