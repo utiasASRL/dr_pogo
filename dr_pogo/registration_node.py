@@ -17,14 +17,36 @@ from dr_pogo.msg import LocalMapInfo, LoopCandidate
 @dataclass
 class RegistrationResult:
     valid: bool
-    x_m: float
-    y_m: float
-    theta_rad: float
+    pose: np.ndarray
     scale: float
     num_matches: int
     reason: str
     warped_query: np.ndarray | None
     candidate_img: np.ndarray | None
+
+def affineToPoseAndScale(affine_matrix, pix_res, img_shape):
+    # Transform to convert the opencv frame to the local map frame
+    T_cv_local_map = np.array([[0, 1, 0, pix_res*img_shape[1]/2],
+                               [-1, 0, 0, pix_res*img_shape[0]/2],
+                               [0, 0, 1, 0],
+                               [0, 0, 0, 1]])
+    T_local_map_cv = np.linalg.inv(T_cv_local_map)
+
+    # Get the scale from the affine matrix
+    scale = np.linalg.norm(affine_matrix[0, :2])
+    # Get the rotation from the affine matrix
+    rotation = np.arctan2(affine_matrix[1, 0], affine_matrix[0, 0])
+    pose = np.eye(4)
+    pose[0, 0] = np.cos(rotation)
+    pose[0, 1] = -np.sin(rotation)
+    pose[1, 0] = np.sin(rotation)
+    pose[1, 1] = np.cos(rotation)
+    pose[0, 3] = affine_matrix[0, 2] * pix_res
+    pose[1, 3] = affine_matrix[1, 2] * pix_res
+
+    # Convert the pose to the local map frame
+    pose = T_local_map_cv @ pose @ T_cv_local_map
+    return pose, scale
 
 
 class RegistrationNode(Node):
@@ -78,6 +100,8 @@ class RegistrationNode(Node):
             "Registration node started. Subscribed to 'raplace_loop_candidate', publishing 'registration_relative_pose' and 'registration_debug_image'."
         )
 
+        self.counter = 0
+
     def resolvePath(self, path: str) -> str | None:
         if os.path.isabs(path) and os.path.isfile(path):
             return path
@@ -111,6 +135,9 @@ class RegistrationNode(Node):
         result = self.estimateRelativePose(query_img, candidate_img, float(msg.resolution))
         self.publishResult(msg, result)
 
+
+
+
     def estimateRelativePose(
         self,
         query_img: np.ndarray,
@@ -119,52 +146,42 @@ class RegistrationNode(Node):
     ) -> RegistrationResult:
         original_shape = query_img.shape
         ratio = 1.0
-        q = query_img
-        c = candidate_img
+        img2 = query_img.copy()
+        img1 = candidate_img.copy()
 
-        if q.shape[0] > self.max_img_size:
-            ratio = q.shape[0] / float(self.max_img_size)
-            q = cv2.resize(q, (self.max_img_size, self.max_img_size))
-            c = cv2.resize(c, (self.max_img_size, self.max_img_size))
+        if img2.shape[0] > self.max_img_size:
+            ratio = img2.shape[0] / float(self.max_img_size)
+            img2 = cv2.resize(img2, (self.max_img_size, self.max_img_size))
+            img1 = cv2.resize(img1, (self.max_img_size, self.max_img_size))
 
-        kp_q, des_q = self.sift_extractor.detectAndCompute(q, None)
-        kp_c, des_c = self.sift_extractor.detectAndCompute(c, None)
-        if des_q is None or des_c is None:
-            return RegistrationResult(False, 0.0, 0.0, 0.0, 1.0, 0, "missing_descriptors", None, None)
+        kp_2, des_2 = self.sift_extractor.detectAndCompute(img2, None)
+        kp_1, des_1 = self.sift_extractor.detectAndCompute(img1, None)
+        if des_2 is None or des_1 is None:
+            return RegistrationResult(False, None, 1.0, 0, "missing_descriptors", None, None)
 
         if ratio != 1.0:
-            for kp in kp_q:
+            for kp in kp_2:
                 kp.pt = (kp.pt[0] * ratio, kp.pt[1] * ratio)
-            for kp in kp_c:
+            for kp in kp_1:
                 kp.pt = (kp.pt[0] * ratio, kp.pt[1] * ratio)
 
-        matches = self.sift_matcher.knnMatch(des_q, des_c, k=2)
+        matches = self.sift_matcher.knnMatch(des_1, des_2, k=2)
 
         good_matches = []
         for pair in matches:
             if len(pair) < 2:
                 continue
             m, n = pair
-            if (kp_q[m.queryIdx].octave & 255) != (kp_c[n.trainIdx].octave & 255):
+            if (kp_1[m.queryIdx].octave & 255) != (kp_2[n.trainIdx].octave & 255):
                 continue
             if m.distance < self.lowe_ratio * n.distance:
                 good_matches.append(m)
 
         if len(good_matches) < 4:
-            return RegistrationResult(
-                False,
-                0.0,
-                0.0,
-                0.0,
-                1.0,
-                len(good_matches),
-                "insufficient_matches",
-                None,
-                None,
-            )
+            return RegistrationResult(False, None, 1.0, 0, "insufficient_matches", None, None)
 
-        dst_pts = np.float32([kp_q[m.queryIdx].pt for m in good_matches]).reshape(-1, 1, 2)
-        src_pts = np.float32([kp_c[m.trainIdx].pt for m in good_matches]).reshape(-1, 1, 2)
+        dst_pts = np.float32([kp_1[m.queryIdx].pt for m in good_matches]).reshape(-1, 1, 2)
+        src_pts = np.float32([kp_2[m.trainIdx].pt for m in good_matches]).reshape(-1, 1, 2)
         M, inliers = cv2.estimateAffinePartial2D(
             src_pts,
             dst_pts,
@@ -172,54 +189,25 @@ class RegistrationNode(Node):
             ransacReprojThreshold=self.ransac_thr,
         )
         if M is None:
-            return RegistrationResult(
-                False,
-                0.0,
-                0.0,
-                0.0,
-                1.0,
-                len(good_matches),
-                "ransac_failed",
-                None,
-                None,
-            )
+            return RegistrationResult(False, None, 1.0, len(good_matches), "ransac_failed", None, None)
+        
+        if inliers is None or np.sum(inliers) < 3:
+            return RegistrationResult(False, None, 1.0, len(good_matches), "insufficient_inliers", None, None)
 
-        a, b, tx = float(M[0, 0]), float(M[0, 1]), float(M[0, 2])
-        c_m, d, ty = float(M[1, 0]), float(M[1, 1]), float(M[1, 2])
-        sx = np.hypot(a, c_m)
-        sy = np.hypot(b, d)
-        scale = 0.5 * (sx + sy)
+
+        pose, scale = affineToPoseAndScale(M, resolution_m_per_px, original_shape)
+
 
         if abs(scale - 1.0) > self.max_scale_error:
-            return RegistrationResult(
-                False,
-                0.0,
-                0.0,
-                0.0,
-                scale,
-                len(good_matches),
-                "scale_rejected",
-                None,
-                None,
-            )
+            return RegistrationResult(False, None, scale, len(good_matches), "scale_error", None, None)
 
-        theta = float(np.arctan2(c_m, a))
-        if resolution_m_per_px <= 0.0:
-            resolution_m_per_px = 1.0
-
-        cx = (original_shape[1] - 1.0) * 0.5
-        cy = (original_shape[0] - 1.0) * 0.5
-        center = np.array([cx, cy], dtype=np.float64)
-        Rm = np.array([[a, b], [c_m, d]], dtype=np.float64)
-        t = np.array([tx, ty], dtype=np.float64)
-        t_center = t + Rm @ center - center
-
-        x_m = float(t_center[0] * resolution_m_per_px)
-        y_m = float(-t_center[1] * resolution_m_per_px)
 
         M_viz = M.copy()
         M_viz[:, -1] = M_viz[:, -1] / ratio
-        warped_query = cv2.warpAffine(query_img, M_viz, (candidate_img.shape[1], candidate_img.shape[0]))
+        img2_warped = cv2.warpAffine(img2, M_viz, (img1.shape[1], img1.shape[0]))
+        # Display the warped query and candidate images side by side
+        vis_debug = np.hstack((cv2.cvtColor(img1, cv2.COLOR_GRAY2BGR), cv2.cvtColor(img2_warped, cv2.COLOR_GRAY2BGR)))
+        cv2.imwrite(os.path.join(self.debug_output_dir, f"warped_q{self.counter}.png"), vis_debug)
 
         if inliers is not None:
             inlier_ratio = float(np.mean(inliers))
@@ -227,56 +215,58 @@ class RegistrationNode(Node):
         else:
             reason = "ok"
 
+        self.counter += 1
+
         return RegistrationResult(
             True,
-            x_m,
-            y_m,
-            theta,
+            pose,
             scale,
             len(good_matches),
             reason,
-            warped_query,
-            candidate_img,
+            img2_warped,
+            img1,
         )
 
     def publishResult(self, source_msg: LoopCandidate, result: RegistrationResult) -> None:
         if result.valid:
+            x_m = result.pose[0, 3]
+            y_m = result.pose[1, 3]
+            theta_rad = np.arctan2(result.pose[1, 0], result.pose[0, 0])
             pose_msg = LocalMapInfo()
             pose_msg.header = source_msg.header
-            pose_msg.x = float(result.x_m)
-            pose_msg.y = float(result.y_m)
-            pose_msg.theta = float(result.theta_rad)
+            pose_msg.x = float(x_m)
+            pose_msg.y = float(y_m)
+            pose_msg.theta = float(theta_rad)
             pose_msg.resolution = float(source_msg.resolution)
             self.pose_pub.publish(pose_msg)
 
-        if result.warped_query is not None and result.candidate_img is not None:
-            left = cv2.cvtColor(result.warped_query, cv2.COLOR_GRAY2BGR)
-            right = cv2.cvtColor(result.candidate_img, cv2.COLOR_GRAY2BGR)
-            viz = np.hstack((left, right))
-            status = "ACCEPTED" if result.valid else "REJECTED"
-            text = (
-                f"{status} | q={source_msg.query_index} c={source_msg.candidate_index} "
-                f"| m={result.num_matches} | s={result.scale:.3f} | {result.reason}"
-            )
-            cv2.putText(
-                viz,
-                text,
-                (10, 30),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.65,
-                (0, 255, 0) if result.valid else (0, 0, 255),
-                2,
-                cv2.LINE_AA,
-            )
-            image_msg = self.bridge.cv2_to_imgmsg(viz, encoding="bgr8")
-            image_msg.header = source_msg.header
-            self.viz_pub.publish(image_msg)
-            cv2.imwrite(os.path.join(self.debug_output_dir, f"debug_reg_q{source_msg.query_index}_c{source_msg.candidate_index}_{status}.png"), viz)
+        #if result.img1_warped is not None and result.img2 is not None:
+        #    left = cv2.cvtColor(result.img1_warped, cv2.COLOR_GRAY2BGR)
+        #    right = cv2.cvtColor(result.img2, cv2.COLOR_GRAY2BGR)
+        #    viz = np.hstack((left, right))
+        #    status = "ACCEPTED" if result.valid else "REJECTED"
+        #    text = (
+        #        f"{status} | q={source_msg.query_index} c={source_msg.candidate_index} "
+        #        f"| m={result.num_matches} | s={result.scale:.3f} | {result.reason}"
+        #    )
+        #    cv2.putText(
+        #        viz,
+        #        text,
+        #        (10, 30),
+        #        cv2.FONT_HERSHEY_SIMPLEX,
+        #        0.65,
+        #        (0, 255, 0) if result.valid else (0, 0, 255),
+        #        2,
+        #        cv2.LINE_AA,
+        #    )
+        #    image_msg = self.bridge.cv2_to_imgmsg(viz, encoding="bgr8")
+        #    image_msg.header = source_msg.header
+        #    self.viz_pub.publish(image_msg)
+        #    cv2.imwrite(os.path.join(self.debug_output_dir, f"debug_reg_q{source_msg.query_index}_c{source_msg.candidate_index}_{status}.png"), viz)
 
-        if result.valid:
             self.get_logger().info(
                 f"Registration accepted q={source_msg.query_index} c={source_msg.candidate_index}: "
-                f"x={result.x_m:.2f} m, y={result.y_m:.2f} m, theta={result.theta_rad:.3f} rad, "
+                f"x={x_m:.2f} m, y={y_m:.2f} m, theta={theta_rad:.3f} rad, "
                 f"matches={result.num_matches}, scale={result.scale:.3f}"
             )
         else:
