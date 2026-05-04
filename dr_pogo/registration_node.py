@@ -9,10 +9,13 @@ import rclpy
 from cv_bridge import CvBridge
 from rclpy.node import Node
 from sensor_msgs.msg import Image
+from geometry_msgs.msg import TransformStamped
 import yaml
 import torch
+import time
+from scipy.spatial.transform import Rotation as R
 
-from dr_pogo.msg import LocalMapInfo, LoopCandidate
+from dr_pogo.msg import LoopCandidate
 
 
 @dataclass
@@ -177,7 +180,7 @@ class LocalMapRegistrator:
             # Thus, if the cost function decreases, we go back to the last increasing
             # state and reduce the step size
             state = self.xytheta_init.clone().to(self.device).float()
-            first_cost = torch.tensor(np.inf).to(self.device)
+            first_cost = torch.tensor(np.inf, device=self.device)
             prev_cost = first_cost
             first_quantum = self.optimisation_first_step
             step_quantum = first_quantum
@@ -390,7 +393,7 @@ class RegistrationNode(Node):
             self.candidateCallback,
             20,
         )
-        self.pose_pub = self.create_publisher(LocalMapInfo, "registration_relative_pose", 20)
+        self.pose_pub = self.create_publisher(TransformStamped, "registration_relative_pose", 20)
         self.viz_pub = self.create_publisher(Image, "registration_debug_image", 20)
 
         self.get_logger().info(
@@ -432,7 +435,12 @@ class RegistrationNode(Node):
         result = self.estimateRelativePose(query_img, candidate_img, float(msg.resolution))
 
         if result.valid:
+            t1 = time.time()
             result = self.refineRegistration(candidate_img, query_img, float(msg.resolution), result)
+            t2 = time.time()
+            self.get_logger().info(
+                f"Refinement for candidate q={msg.query_index} c={msg.candidate_index} took {t2-t1:.2f} seconds. Final reason: {result.reason}."
+            )
 
         if result.valid:
             self.get_logger().info(
@@ -596,12 +604,18 @@ class RegistrationNode(Node):
             x_m = result.pose[0, 3]
             y_m = result.pose[1, 3]
             theta_rad = np.arctan2(result.pose[1, 0], result.pose[0, 0])
-            pose_msg = LocalMapInfo()
+            pose_msg = TransformStamped()
             pose_msg.header = source_msg.header
-            pose_msg.x = float(x_m)
-            pose_msg.y = float(y_m)
-            pose_msg.theta = float(theta_rad)
-            pose_msg.resolution = float(source_msg.resolution)
+            pose_msg.header.frame_id = str(source_msg.candidate_time)
+            pose_msg.child_frame_id = str(source_msg.query_time)
+            pose_msg.transform.translation.x = x_m
+            pose_msg.transform.translation.y = y_m
+            pose_msg.transform.translation.z = 0.0
+            quat = R.from_matrix(result.pose[:3, :3]).as_quat()
+            pose_msg.transform.rotation.x = quat[0]
+            pose_msg.transform.rotation.y = quat[1]
+            pose_msg.transform.rotation.z = quat[2]
+            pose_msg.transform.rotation.w = quat[3]
             self.pose_pub.publish(pose_msg)
 
 
