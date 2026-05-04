@@ -62,16 +62,6 @@ class RegistrationNode(Node):
         with open(config_file_path, "r", encoding="utf-8") as f:
             cfg = yaml.safe_load(f)
             
-        ##### FOR DEBUG
-        self.debug_output_dir = os.path.join(self.package_share, "registration_debug")
-        # if exists, clear the debug output directory
-        if os.path.exists(self.debug_output_dir):
-            for filename in os.listdir(self.debug_output_dir):
-                file_path = os.path.join(self.debug_output_dir, filename)
-                if os.path.isfile(file_path):
-                    os.unlink(file_path)
-        else:
-            os.makedirs(self.debug_output_dir, exist_ok=True)
 
         self.lowe_ratio = float(cfg["lowe_ratio"])
         self.ransac_thr = float(cfg["ransac_thr"])
@@ -205,9 +195,6 @@ class RegistrationNode(Node):
         M_viz = M.copy()
         M_viz[:, -1] = M_viz[:, -1] / ratio
         img2_warped = cv2.warpAffine(img2, M_viz, (img1.shape[1], img1.shape[0]))
-        # Display the warped query and candidate images side by side
-        vis_debug = np.hstack((cv2.cvtColor(img1, cv2.COLOR_GRAY2BGR), cv2.cvtColor(img2_warped, cv2.COLOR_GRAY2BGR)))
-        cv2.imwrite(os.path.join(self.debug_output_dir, f"warped_q{self.counter}.png"), vis_debug)
 
         if inliers is not None:
             inlier_ratio = float(np.mean(inliers))
@@ -240,29 +227,29 @@ class RegistrationNode(Node):
             pose_msg.resolution = float(source_msg.resolution)
             self.pose_pub.publish(pose_msg)
 
-        #if result.img1_warped is not None and result.img2 is not None:
-        #    left = cv2.cvtColor(result.img1_warped, cv2.COLOR_GRAY2BGR)
-        #    right = cv2.cvtColor(result.img2, cv2.COLOR_GRAY2BGR)
-        #    viz = np.hstack((left, right))
-        #    status = "ACCEPTED" if result.valid else "REJECTED"
-        #    text = (
-        #        f"{status} | q={source_msg.query_index} c={source_msg.candidate_index} "
-        #        f"| m={result.num_matches} | s={result.scale:.3f} | {result.reason}"
-        #    )
-        #    cv2.putText(
-        #        viz,
-        #        text,
-        #        (10, 30),
-        #        cv2.FONT_HERSHEY_SIMPLEX,
-        #        0.65,
-        #        (0, 255, 0) if result.valid else (0, 0, 255),
-        #        2,
-        #        cv2.LINE_AA,
-        #    )
-        #    image_msg = self.bridge.cv2_to_imgmsg(viz, encoding="bgr8")
-        #    image_msg.header = source_msg.header
-        #    self.viz_pub.publish(image_msg)
-        #    cv2.imwrite(os.path.join(self.debug_output_dir, f"debug_reg_q{source_msg.query_index}_c{source_msg.candidate_index}_{status}.png"), viz)
+
+            if self.viz_pub.get_subscription_count() > 0 and result.warped_query is not None and result.candidate_img is not None:
+                left = cv2.cvtColor(result.candidate_img, cv2.COLOR_GRAY2BGR)
+                right = cv2.cvtColor(result.warped_query, cv2.COLOR_GRAY2BGR)
+                viz = np.hstack((left, right))
+                status = "ACCEPTED" if result.valid else "REJECTED"
+                text = (
+                    f"{status} | q={source_msg.query_index} c={source_msg.candidate_index} "
+                    f"| m={result.num_matches} | s={result.scale:.3f} | {result.reason}"
+                )
+                cv2.putText(
+                    viz,
+                    text,
+                    (10, 30),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.65,
+                    (0, 255, 0) if result.valid else (0, 0, 255),
+                    2,
+                    cv2.LINE_AA,
+                )
+                image_msg = self.bridge.cv2_to_imgmsg(viz, encoding="bgr8")
+                image_msg.header = source_msg.header
+                self.viz_pub.publish(image_msg)
 
             self.get_logger().info(
                 f"Registration accepted q={source_msg.query_index} c={source_msg.candidate_index}: "
