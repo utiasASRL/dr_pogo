@@ -1,0 +1,11 @@
+loss_scale_loop_pos_coarse: 5.0 # Loss function scale ("cutoff") in meters
+loss_scale_loop_pos_fine: 1.0 # Loss function scale ("cutoff") in meters
+loss_scale_loop_rot: 0.05 # Loss function scale ("cutoff") in radians
+odom_pos_std: 0.025 # Standard deviation of odometry pos in meters
+odom_rot_std: 0.00002 # Standard deviation of odometry rot in radians
+loop_pos_std: 0.05 # Standard deviation of loop pos in meters
+loop_rot_std: 0.0002 # Standard deviation of loop rot in radians
+use_coarse_registration: false
+
+estimate_bias: true
+bias_walk_std: 1e-12

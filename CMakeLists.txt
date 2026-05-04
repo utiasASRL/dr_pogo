@@ -5,6 +5,12 @@ project(dr_pogo)
 find_package(ament_cmake REQUIRED)
 find_package(ament_cmake_python REQUIRED)
 find_package(rosidl_default_generators REQUIRED)
+find_package(rclcpp REQUIRED)
+find_package(nav_msgs REQUIRED)
+find_package(geometry_msgs REQUIRED)
+find_package(yaml-cpp REQUIRED)
+find_package(Ceres REQUIRED)
+find_package(Eigen3 REQUIRED)
 
 find_package(std_msgs REQUIRED)
 
@@ -57,6 +63,38 @@ install(DIRECTORY launch
 
 install(DIRECTORY config
   DESTINATION share/${PROJECT_NAME}
+)
+
+add_executable(pogo_node
+  dr_pogo/pogo/pogo.cpp dr_pogo/pogo/pose_graph.cpp
+)
+target_include_directories(pogo_node PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR}/dr_pogo/pogo
+  ${YAML_CPP_INCLUDE_DIRS}
+  ${CERES_INCLUDE_DIRS}
+  ${EIGEN3_INCLUDE_DIRS}
+)
+ament_target_dependencies(pogo_node
+  rclcpp
+  nav_msgs
+  geometry_msgs
+)
+
+# Non-ament CMake packages must be linked explicitly.
+if(TARGET yaml-cpp::yaml-cpp)
+  target_link_libraries(pogo_node yaml-cpp::yaml-cpp)
+else()
+  target_link_libraries(pogo_node yaml-cpp)
+endif()
+
+if(TARGET Ceres::ceres)
+  target_link_libraries(pogo_node Ceres::ceres)
+else()
+  target_link_libraries(pogo_node ${CERES_LIBRARIES})
+endif()
+
+install(TARGETS pogo_node
+  DESTINATION lib/${PROJECT_NAME}
 )
 
 
