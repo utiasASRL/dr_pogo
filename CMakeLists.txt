@@ -66,7 +66,7 @@ install(DIRECTORY config
 )
 
 add_executable(pogo_node
-  dr_pogo/pogo/pogo.cpp dr_pogo/pogo/pose_graph.cpp
+  dr_pogo/pogo/pogo_node.cpp dr_pogo/pogo/pose_graph.cpp
 )
 target_include_directories(pogo_node PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/dr_pogo/pogo

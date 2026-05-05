@@ -42,7 +42,21 @@ class PoseGraph {
 
         void printLastPose() const;
 
+        size_t size() const { return node_times_.size(); }
+
         void writeToFile(const std::string& filename) const;
+
+        std::pair<std::vector<int64_t>, std::vector<std::array<double, 3>>> getPoses() const
+        {
+            std::vector<int64_t> times;
+            std::vector<std::array<double, 3>> poses;
+            for(size_t i = 0; i < node_times_.size(); ++i)
+            {
+                times.push_back(node_times_[i]);
+                poses.push_back(*(node_poses_[i]));
+            }
+            return {times, poses};
+        }
 
     private:
         PoseGraphOpts opts_;

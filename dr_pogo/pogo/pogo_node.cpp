@@ -4,6 +4,7 @@
 #include <rclcpp/rclcpp.hpp>
 #include <nav_msgs/msg/odometry.hpp>
 #include <geometry_msgs/msg/transform_stamped.hpp>
+#include <nav_msgs/msg/path.hpp>
 #include <yaml-cpp/yaml.h>
 
 #include <array>
@@ -21,8 +22,14 @@ class PogoNode : public rclcpp::Node {
             PoseGraphOpts opts;
 
             // Read the config file
-            // Get the path to the config file from a parameter, with a default value
-            std::string config_file = this->declare_parameter<std::string>("config_file", "pogo/config_temp.yaml");
+            // Get the path to the config file from a parameter without a default value (must be provided by the user)
+            std::string config_file;
+            this->declare_parameter<std::string>("config_file", "");
+            if (!this->get_parameter("config_file").as_string().empty()) {
+                config_file = this->get_parameter("config_file").as_string();
+            } else {
+                throw std::runtime_error("Config file path must be provided as a parameter 'config_file'.");
+            }
             YAML::Node config = YAML::LoadFile(config_file);
             if (!config["loss_scale_loop_pos_coarse"]) {
                 throw std::runtime_error("Loss scale for loop position coarse not found in config file.");
@@ -74,14 +81,15 @@ class PogoNode : public rclcpp::Node {
             opts.loop_rot_std = config["loop_rot_std"].as<double>() * M_PI / 180.0;
 
 
-            odom_topic_ = "/dro_odometry";
+            odom_topic_ = "/dro_local_map_odometry";
             loop_topic_ = "/registration_relative_pose";
 
             pose_graph_ = std::make_unique<PoseGraph>(opts);
 
+            // Subscribe with a stack size of 100 messages to avoid missing messages in case of slow processing
             odom_sub_ = this->create_subscription<nav_msgs::msg::Odometry>(
                 odom_topic_,
-                rclcpp::SystemDefaultsQoS(),
+                rclcpp::SystemDefaultsQoS().keep_last(100),
                 std::bind(&PogoNode::onOdometry, this, std::placeholders::_1)
             );
 
@@ -91,6 +99,8 @@ class PogoNode : public rclcpp::Node {
                 std::bind(&PogoNode::onLoopTransform, this, std::placeholders::_1)
             );
 
+            path_pub_ = this->create_publisher<nav_msgs::msg::Path>("pogo_path", rclcpp::SystemDefaultsQoS());
+
             RCLCPP_INFO(get_logger(), "Started pogo_node. Subscribed to odom='%s', loop_transform='%s'.",
                         odom_topic_.c_str(), loop_topic_.c_str());
             RCLCPP_INFO(get_logger(), "Loop edges use frame IDs as timestamps: header.frame_id -> t0, child_frame_id -> t1.");
@@ -98,8 +108,15 @@ class PogoNode : public rclcpp::Node {
 
 
     private:
-        static int64_t stampToNanoseconds(const builtin_interfaces::msg::Time & stamp) {
-            return static_cast<int64_t>(stamp.sec) * 1000000000LL + static_cast<int64_t>(stamp.nanosec);
+        static int64_t stampToMicroseconds(const builtin_interfaces::msg::Time & stamp) {
+            return static_cast<int64_t>(stamp.sec) * 1000000LL + static_cast<int64_t>(stamp.nanosec) / 1000LL;
+        }
+
+        static builtin_interfaces::msg::Time microsecondsToStamp(int64_t microseconds) {
+            builtin_interfaces::msg::Time time;
+            time.sec = microseconds / 1000000LL;
+            time.nanosec = (microseconds % 1000000LL) * 1000LL;
+            return time;
         }
 
         static bool parseInt64(const std::string & text, int64_t & out_value) {
@@ -121,24 +138,35 @@ class PogoNode : public rclcpp::Node {
             return std::atan2(siny_cosp, cosy_cosp);
         }
 
-        void writeTrajectoryToFile() const {
-            std::ofstream file(output_traj_path_);
-            if (!file.is_open()) {
-                RCLCPP_ERROR(get_logger(), "Failed to open trajectory output file: %s", output_traj_path_.c_str());
-                return;
+        void writeTrajAndPublish() const {
+            // Measure the time taken by writing the trajectory to file and publishing the path
+            pose_graph_->writeToFile(output_traj_path_);
+            if (path_pub_) {
+                auto [times, poses] = pose_graph_->getPoses();
+
+                nav_msgs::msg::Path path_msg;
+                path_msg.header.stamp = microsecondsToStamp(times.back());
+                path_msg.header.frame_id = "map";
+                for (size_t i = 0; i < poses.size(); ++i) {
+                    geometry_msgs::msg::PoseStamped pose_stamped;
+                    pose_stamped.header.stamp = microsecondsToStamp(times[i]);
+                    pose_stamped.header.frame_id = "map";
+                    pose_stamped.pose.position.x = poses[i][0];
+                    pose_stamped.pose.position.y = poses[i][1];
+                    Eigen::Quaterniond q = yawToQuaternion(poses[i][2]);
+                    pose_stamped.pose.orientation.x = q.x();
+                    pose_stamped.pose.orientation.y = q.y();
+                    pose_stamped.pose.orientation.z = q.z();
+                    pose_stamped.pose.orientation.w = q.w();
+                    path_msg.poses.push_back(pose_stamped);
+                }
+                path_pub_->publish(path_msg);
             }
-            for (size_t i = 0; i < pose_graph_->node_times_.size(); ++i) {
-                const auto & t = pose_graph_->node_times_[i];
-                const auto & pose = *pose_graph_->node_poses_[i];
-                file << t << " " << pose[0] << " " << pose[1] << " " << pose[2] << "\n";
-            }
-            file.close();
-            RCLCPP_INFO(get_logger(), "Trajectory written to: %s", output_traj_path_.c_str());
         }
 
         void onOdometry(const nav_msgs::msg::Odometry::SharedPtr msg) {
-            const int64_t t_curr = stampToNanoseconds(msg->header.stamp);
-
+            const int64_t t_curr = stampToMicroseconds(msg->header.stamp);
+            std::cout << "Received odometry at time " << t_curr << " microseconds." << std::endl;
             std::array<double, 3> curr_pose{
                 msg->pose.pose.position.x,
                 msg->pose.pose.position.y,
@@ -161,7 +189,7 @@ class PogoNode : public rclcpp::Node {
             last_odom_time_ = t_curr;
             last_odom_pose_ = curr_pose;
 
-            writeTrajectoryToFile();
+            writeTrajAndPublish();
         }
 
         void onLoopTransform(const geometry_msgs::msg::TransformStamped::SharedPtr msg) {
@@ -180,6 +208,9 @@ class PogoNode : public rclcpp::Node {
                 return;
             }
 
+            std::cout << "Received loop closure between\n t0 = " << t0 << "\n t1 = " << t1 << " microseconds." << std::endl;
+            std::cout << "Original frames: frame_id='" << msg->header.frame_id << "', child_frame_id='" << msg->child_frame_id << "'." << std::endl;
+
             const auto & t = msg->transform.translation;
             const auto & q = msg->transform.rotation;
             const std::array<double, 3> relative_pose{
@@ -191,13 +222,14 @@ class PogoNode : public rclcpp::Node {
             pose_graph_->addLoopClosureEdge(t0, t1, relative_pose);
             pose_graph_->optimize();
             pose_graph_->printLastPose();
-            writeTrajectoryToFile();
+            writeTrajAndPublish();
         }
 
         std::unique_ptr<PoseGraph> pose_graph_;
 
         rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_sub_;
         rclcpp::Subscription<geometry_msgs::msg::TransformStamped>::SharedPtr loop_sub_;
+        rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr path_pub_;
 
         std::string odom_topic_;
         std::string loop_topic_;

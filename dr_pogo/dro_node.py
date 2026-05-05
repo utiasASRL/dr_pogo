@@ -36,6 +36,7 @@ class DroNode(Node):
 
         # Set the publisher for the odometry
         self.odometry_publisher = self.create_publisher(Odometry, 'dro_odometry', 10)
+        self.local_map_odometry_publisher = self.create_publisher(Odometry, 'dro_local_map_odometry', 10)
 
         # Set the local map publishers
         self.local_map_image_publisher = self.create_publisher(Image, 'dro_local_map_image', 10)
@@ -287,14 +288,8 @@ class DroNode(Node):
         local_map_image_msg.is_bigendian = False
         local_map_image_msg.step = int(local_map.shape[1] * local_map.itemsize)
         local_map_image_msg.data = local_map.tobytes()
-        t2 = time.time()
-        self.get_logger().info(f"Converted local map to Image message with timestamp {timestamp}, took {round(t2-t1, 3)} seconds")
-        t1 = time.time()
         self.local_map_image_publisher.publish(local_map_image_msg)
-        t2 = time.time()
-        self.get_logger().info(f"Published local map image with timestamp {timestamp}, took {round(t2-t1, 3)} seconds")
 
-        t1 = time.time()
         map_info_msg = LocalMapInfo()
         map_info_msg.header = local_map_image_msg.header
         map_info_msg.x = xy_theta[0]
@@ -302,8 +297,21 @@ class DroNode(Node):
         map_info_msg.theta = xy_theta[2]
         map_info_msg.resolution = self.dro_opts['direct']['local_map_res']
         self.local_map_info_publisher.publish(map_info_msg)
-        t2 = time.time()
-        self.get_logger().info(f"Published local map info with timestamp {timestamp}, took {round(t2-t1, 3)} seconds")
+
+        # Publish the local map odometry
+        local_map_odom_msg = Odometry()
+        local_map_odom_msg.header = local_map_image_msg.header
+        local_map_odom_msg.header.frame_id = "odom"
+        local_map_odom_msg.child_frame_id = "radar"
+        local_map_odom_msg.pose.pose.position.x = xy_theta[0]
+        local_map_odom_msg.pose.pose.position.y = xy_theta[1]
+        local_map_odom_msg.pose.pose.position.z = 0.0  # Assuming planar motion
+        quaternion = R.from_euler('z', xy_theta[2]).as_quat()  # Convert yaw to quaternion
+        local_map_odom_msg.pose.pose.orientation.x = quaternion[0]
+        local_map_odom_msg.pose.pose.orientation.y = quaternion[1]
+        local_map_odom_msg.pose.pose.orientation.z = quaternion[2]
+        local_map_odom_msg.pose.pose.orientation.w = quaternion[3]
+        self.local_map_odometry_publisher.publish(local_map_odom_msg)
 
 
     def writeLocalMap(self, local_map, cumulated_returns, xy_theta, timestamp):

@@ -21,6 +21,12 @@ def generate_launch_description() -> LaunchDescription:
 				name="raplace_node",
 				output="screen",
 			),
+			Node(
+				package="dr_pogo",
+				executable="registration_node",
+				name="registration_node",
+				output="screen",
+			),
             Node(
 				package="rviz2",
                 executable="rviz2",
