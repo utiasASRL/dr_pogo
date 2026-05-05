@@ -314,11 +314,10 @@ class DroNode(Node):
         self.local_map_odometry_publisher.publish(local_map_odom_msg)
 
 
+    # Input local_map and cumulated_returns needs to be in [0, 255] uint8 format np array
     def writeLocalMap(self, local_map, cumulated_returns, xy_theta, timestamp):
-        local_map_to_save = (local_map.detach().cpu().numpy().clip(0, 1) * 255).astype(np.uint8)
-        cv2.imwrite(os.path.join(self.local_map_output_path, str(timestamp) + '.png'), local_map_to_save)
-        cumulated_returns_to_save = (cumulated_returns.detach().cpu().numpy().clip(0, 255)).astype(np.uint8)
-        cv2.imwrite(os.path.join(self.cumulative_return_output_path, str(timestamp) + '.png'), cumulated_returns_to_save)
+        cv2.imwrite(os.path.join(self.local_map_output_path, str(timestamp) + '.png'), local_map)
+        cv2.imwrite(os.path.join(self.cumulative_return_output_path, str(timestamp) + '.png'), cumulated_returns)
 
         df_data_2d = pd.DataFrame(np.array([timestamp, xy_theta[0], xy_theta[1], xy_theta[2]]).reshape(1, -1))
         df_data_2d[0] = df_data_2d[0].astype(np.int64)

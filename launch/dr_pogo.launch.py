@@ -27,6 +27,17 @@ def generate_launch_description() -> LaunchDescription:
 				name="registration_node",
 				output="screen",
 			),
+			Node(
+				package="dr_pogo",
+				executable="pogo_node",
+				name="pogo_node",
+				output="screen",
+				parameters=[
+					{"config_file": PathJoinSubstitution(
+						[FindPackageShare("dr_pogo"), "config", "config_pogo.yaml"]
+					)}
+				],
+			),
             Node(
 				package="rviz2",
                 executable="rviz2",
@@ -34,5 +45,12 @@ def generate_launch_description() -> LaunchDescription:
                 output="screen",
                 arguments=["-d", rviz_file]
             ),
+			Node(
+				package="tf2_ros",
+				executable="static_transform_publisher",
+				name="static_transform_publisher",
+				output="screen",
+				arguments=["0", "0", "0", "0", "0", "0", "odom", "map"]
+			),
 		]
 	)

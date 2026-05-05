@@ -150,7 +150,7 @@ class PogoNode : public rclcpp::Node {
                 for (size_t i = 0; i < poses.size(); ++i) {
                     geometry_msgs::msg::PoseStamped pose_stamped;
                     pose_stamped.header.stamp = microsecondsToStamp(times[i]);
-                    pose_stamped.header.frame_id = "map";
+                    pose_stamped.header.frame_id = "radar";
                     pose_stamped.pose.position.x = poses[i][0];
                     pose_stamped.pose.position.y = poses[i][1];
                     Eigen::Quaterniond q = yawToQuaternion(poses[i][2]);
