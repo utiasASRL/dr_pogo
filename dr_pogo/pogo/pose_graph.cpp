@@ -214,15 +214,16 @@ void PoseGraph::optimize()
 
     ceres::Solver::Summary summary;
     ceres::Solve(options, &problem_, &summary);
-    std::cout << summary.FullReport() << std::endl;
+    std::cout << summary.BriefReport() << std::endl;
 
     // Update the loss functions with the final scale
-    if (loss_function_loop_pos_) {
+    if ((loss_function_loop_pos_) && (first_optimization_)) {
+        first_optimization_ = false;
         dynamic_cast<DynamicCauchyLoss*>(loss_function_loop_pos_)->setScale(opts_.loss_scale_loop_pos_fine / opts_.loop_pos_std);
+        ceres::Solve(options, &problem_, &summary);
+        std::cout << summary.BriefReport() << std::endl;
     }
 
-    ceres::Solve(options, &problem_, &summary);
-    std::cout << summary.FullReport() << std::endl;
 }
 
 

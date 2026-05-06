@@ -7,6 +7,9 @@ from launch.substitutions import PathJoinSubstitution
 def generate_launch_description() -> LaunchDescription:
 	rviz_file = PathJoinSubstitution(
            [FindPackageShare("dr_pogo"), "config", "rviz.rviz"])
+	output_path = PathJoinSubstitution(
+		[FindPackageShare("dr_pogo"), "output"]
+	)
 	return LaunchDescription(
 		[
 			Node(
@@ -14,6 +17,9 @@ def generate_launch_description() -> LaunchDescription:
 				executable="dro_node",
 				name="dro_node",
 				output="screen",
+				parameters=[
+					{"output_path": output_path}
+				],
 			),
 			Node(
 				package="dr_pogo",
@@ -34,8 +40,9 @@ def generate_launch_description() -> LaunchDescription:
 				output="screen",
 				parameters=[
 					{"config_file": PathJoinSubstitution(
-						[FindPackageShare("dr_pogo"), "config", "config_pogo.yaml"]
-					)}
+						[FindPackageShare("dr_pogo"), "config", "config_pogo.yaml"]),
+					"output_path": output_path
+					}
 				],
 			),
             Node(

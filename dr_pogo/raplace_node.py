@@ -186,8 +186,6 @@ class RaplaceNode(Node):
             self.cumulated_dists.append(dist + (self.cumulated_dists[-1]))
         self.odome_poses.append(np.array([info_msg.x, info_msg.y, info_msg.theta]))
 
-        print('Cumulated distance: ', self.cumulated_dists[-1], ' m')
-
 
         # Convert the incoming Image message to a numpy array
         image_np = np.frombuffer(image_msg.data, dtype=np.uint8).reshape((image_msg.height, image_msg.width))
@@ -215,9 +213,6 @@ class RaplaceNode(Node):
             self.publishCandidate(map_entry, best_entry, best_score, min_dist, image_msg)
         
 
-
-        if len(self.entries) > 1:
-            print(f"Received local map with timestamp {timestamp_us}, delta to previous {timestamp_us - self.entries[-2].timestamp_us} us")
 
 
 

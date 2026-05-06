@@ -79,6 +79,7 @@ ament_target_dependencies(pogo_node
   nav_msgs
   geometry_msgs
 )
+target_link_libraries(pogo_node ${PROJECT_NAME}__rosidl_typesupport_cpp)
 
 # Non-ament CMake packages must be linked explicitly.
 if(TARGET yaml-cpp::yaml-cpp)

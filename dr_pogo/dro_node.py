@@ -42,7 +42,9 @@ class DroNode(Node):
         self.local_map_image_publisher = self.create_publisher(Image, 'dro_local_map_image', 10)
         self.local_map_info_publisher = self.create_publisher(LocalMapInfo, 'dro_local_map_info', 10)
 
-
+        # Get the output path from the parameters
+        self.declare_parameter('output_path', 'output')
+        self.output_path = self.get_parameter('output_path').get_parameter_value().string_value
 
         self.radar_data_buffer = []
         self.imu_data_buffer = []
@@ -94,7 +96,7 @@ class DroNode(Node):
     def initialize(self, radar_data):
         # Create the output folders for the sequence
         seq_ID = radar_data['sequence_id']
-        self.seq_output_folder = os.path.join("output", seq_ID)
+        self.seq_output_folder = os.path.join(self.output_path, seq_ID)
         print(f"Creating output folder: {self.seq_output_folder}")
         os.makedirs(self.seq_output_folder, exist_ok=True)
 
@@ -189,7 +191,7 @@ class DroNode(Node):
         end_idx = min(len(imu_times), end_idx + 1)  # Ensure at least one IMU after the radar timestamps
         relevant_imus = self.imu_data_buffer[start_idx:end_idx]
 
-        self.get_logger().info(f"Processing radar scan (from {round(first_radar_time*1e-6, 3)} to {round(last_radar_time*1e-6, 3)}) with {len(relevant_imus)} IMU measurements from {round(imu_times[start_idx]*1e-6, 3)} to {round(imu_times[end_idx-1]*1e-6, 3)}")
+        #self.get_logger().info(f"Processing radar scan (from {round(first_radar_time*1e-6, 3)} to {round(last_radar_time*1e-6, 3)}) with {len(relevant_imus)} IMU measurements from {round(imu_times[start_idx]*1e-6, 3)} to {round(imu_times[end_idx-1]*1e-6, 3)}")
 
         t1 = time.time()
         self.dro.odometryStep(self.radar_data_buffer[0], relevant_imus)
@@ -199,12 +201,8 @@ class DroNode(Node):
 
         # Get the odometry results
         current_odometry = self.dro.getPose(self.radar_data_buffer[0]['timestamp'])
-        self.get_logger().info(f"Current odometry:\n{current_odometry}")
         self.publishOdometry(current_odometry, self.radar_data_buffer[0]['timestamp'])
         self.logOdometry(current_odometry, self.radar_data_buffer[0]['timestamp'])
-
-        # If use gyro, feed the velocity estimates with the gyro for 3D state estimation
-        self.get_logger().warn("TODO: compute the 3D pose")
 
 
         # Clear the first radar
@@ -241,8 +239,6 @@ class DroNode(Node):
         odom_msg.pose.pose.orientation.z = quaternion[2]
         odom_msg.pose.pose.orientation.w = quaternion[3]
         self.odometry_publisher.publish(odom_msg)
-
-        self.get_logger().info(f"Published odometry message with timestamp {timestamp} and pose:\n{pose}")
 
 
     def logOdometry(self, pose, timestamp):

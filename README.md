@@ -12,7 +12,7 @@ If you find this code useful, please consider citing our paper:
 ```
 @inproceedings{legentil2026drpogo,
   title={Dr-PoGO: Direct Radar Pose-Graph Optimization},
-    author={Le Gentil, Cedric and Weican, Li and Brizi, Leonardo and Barfoot, Timothy D.},
+    author={{Le Gentil}, Cedric and Weican, Li and Brizi, Leonardo and Barfoot, Timothy D.},
   booktitle={IEEE International Conference on Robotics and Automation (ICRA)},
   year={2026}
 }
@@ -22,7 +22,7 @@ If you find this code useful, please consider citing our paper:
 ```
 @inproceedings{legentil2025dro,
   title={Dro: Doppler-aware direct radar odometry},
-  author={Le Gentil, Cedric and Brizi, Leonardo and Lisus, Daniil and Qiao, Xinyuan and Grisetti, Giorgio and Barfoot, Timothy D.},
+  author={{Le Gentil}, Cedric and Brizi, Leonardo and Lisus, Daniil and Qiao, Xinyuan and Grisetti, Giorgio and Barfoot, Timothy D.},
   booktitle={Robotics: Science and Systems (RSS)},
   year={2025}
 }
@@ -129,12 +129,13 @@ All YAML config files live under `config/`.
 
 ## Output
 
-TODO: add more details on the output (e.g., what files are written, where, and in what format)
+Atop ROS2 topics shown in RViz, Dr-PoGO outputs the odometry and pose-graph optimized trajectories in files in an output directory specified in the launch file (default is in the install space under `<ros2_ws>/install/dr_pogo/share/dr_pogo/<sequence_id>/`):
+- `odometry_result/<sequence_id>.txt`: DRO odometry trajectory using the Boreas format.
+- `pose_graph_traj.txt`: Pose-graph optimized trajectory in with `timestamp(us) x y theta` format.
+
 
 ### TODOs
 
 - [ ] Improve documentation
 - [ ] Make DRO faster with compilation (e.g., using `torch.compile` but need some tricks)
-- [ ] Clear the printouts
-- [ ] Uniformize the output folder writing across nodes (currently `dro_node` writes local maps and cumulative returns, `pogo_node` writes the optimized trajectory)
 - [ ] Add the 3D odometry output as for 3DRO

@@ -77,6 +77,8 @@ class PoseGraph {
 
         ceres::Problem problem_;
 
+        bool first_optimization_ = true;
+
 };
 
 

@@ -2,10 +2,13 @@
 #include "utils.h"
 
 #include <rclcpp/rclcpp.hpp>
+#include <rclcpp/wait_for_message.hpp>
 #include <nav_msgs/msg/odometry.hpp>
 #include <geometry_msgs/msg/transform_stamped.hpp>
 #include <nav_msgs/msg/path.hpp>
 #include <yaml-cpp/yaml.h>
+#include <dr_pogo/msg/radar_info.hpp>
+
 
 #include <array>
 #include <cmath>
@@ -30,6 +33,7 @@ class PogoNode : public rclcpp::Node {
             } else {
                 throw std::runtime_error("Config file path must be provided as a parameter 'config_file'.");
             }
+
             YAML::Node config = YAML::LoadFile(config_file);
             if (!config["loss_scale_loop_pos_coarse"]) {
                 throw std::runtime_error("Loss scale for loop position coarse not found in config file.");
@@ -63,13 +67,6 @@ class PogoNode : public rclcpp::Node {
                 }
                 opts.bias_std = config["bias_walk_std"].as<double>();
             }
-            if (!config["output_traj_path"]) {
-                output_traj_path_ = "pose_graph_traj.txt";
-            }
-            else
-            {
-                output_traj_path_ = config["output_traj_path"].as<std::string>();
-            }
 
 
             opts.loss_scale_loop_pos_coarse = config["loss_scale_loop_pos_coarse"].as<double>();
@@ -101,9 +98,34 @@ class PogoNode : public rclcpp::Node {
 
             path_pub_ = this->create_publisher<nav_msgs::msg::Path>("pogo_path", rclcpp::SystemDefaultsQoS());
 
+
+
             RCLCPP_INFO(get_logger(), "Started pogo_node. Subscribed to odom='%s', loop_transform='%s'.",
                         odom_topic_.c_str(), loop_topic_.c_str());
-            RCLCPP_INFO(get_logger(), "Loop edges use frame IDs as timestamps: header.frame_id -> t0, child_frame_id -> t1.");
+
+            // Read the output path base from the the parameter "output_path"
+            this->declare_parameter<std::string>("output_path", "");
+            output_traj_path_ = this->get_parameter("output_path").as_string();
+            if(output_traj_path_.size() > 0 && output_traj_path_.back() != '/')
+            {
+                output_traj_path_ += '/';
+            }
+            RCLCPP_INFO(get_logger(), "Waiting for a single radar info message to initialize the trajectory output file with the sequence ID");
+            dr_pogo::msg::RadarInfo radar_info_msg;
+            auto node_ptr = std::shared_ptr<rclcpp::Node>(this, [](rclcpp::Node *) {});
+            if (rclcpp::wait_for_message(
+                    radar_info_msg,
+                    node_ptr,
+                    "/boreas/radar_info"))
+            {
+                std::string sequence_id = radar_info_msg.sequence_id;
+                output_traj_path_ = output_traj_path_ + sequence_id + "/pose_graph_traj.txt";
+                RCLCPP_INFO(get_logger(), "Got radar info, sequence_id='%s'", sequence_id.c_str());
+            } else {
+                throw std::runtime_error("Timed out waiting for radar_info message.");
+            }
+
+            
         }
 
 
@@ -166,7 +188,6 @@ class PogoNode : public rclcpp::Node {
 
         void onOdometry(const nav_msgs::msg::Odometry::SharedPtr msg) {
             const int64_t t_curr = stampToMicroseconds(msg->header.stamp);
-            std::cout << "Received odometry at time " << t_curr << " microseconds." << std::endl;
             std::array<double, 3> curr_pose{
                 msg->pose.pose.position.x,
                 msg->pose.pose.position.y,
@@ -207,9 +228,6 @@ class PogoNode : public rclcpp::Node {
                     msg->child_frame_id.c_str());
                 return;
             }
-
-            std::cout << "Received loop closure between\n t0 = " << t0 << "\n t1 = " << t1 << " microseconds." << std::endl;
-            std::cout << "Original frames: frame_id='" << msg->header.frame_id << "', child_frame_id='" << msg->child_frame_id << "'." << std::endl;
 
             const auto & t = msg->transform.translation;
             const auto & q = msg->transform.rotation;

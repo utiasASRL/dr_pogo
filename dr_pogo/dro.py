@@ -367,7 +367,6 @@ class Dro():
                     axle_vel = T_axle_radar[:3, :3] @ vel_doppler_only
                 vy = (T_axle_radar[:3,:3].T@(np.array([0, axle_vel[1], 0])))[1]
                 self.vy_bias = 0.01 * vy + (0.99) * self.vy_bias
-                print("Updated vy bias: ", self.vy_bias)
 
             # Update the gyro bias if needed
             if self.estimate_gyro_bias:
@@ -384,7 +383,6 @@ class Dro():
                         self.gyr_bias_init = True
                     else:
                         self.gyr_bias = self.gyr_bias_alpha * self.mean_gyr[len(self.mean_gyr)//2] + (1 - self.gyr_bias_alpha) * self.gyr_bias
-                print("Gyro bias: ", self.gyr_bias)
                 
 
 
