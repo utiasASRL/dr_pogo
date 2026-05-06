@@ -68,6 +68,13 @@ The `requirements.txt` covers: `numpy`, `pandas`, `scipy`, `scikit-learn`, `scik
 
 ## Build
 
+First clone this repository into your ROS 2 workspace's `src/` directory, then build with:
+```bash
+cd <your_ros2_workspace>/src
+git clone git@github.com:utiasASRL/dr_pogo.git
+```
+
+Then build the workspace with:
 ```bash
 cd <your_ros2_workspace>
 colcon build --packages-select dr_pogo --symlink-install
@@ -79,7 +86,7 @@ source install/setup.bash
 ### 1. Prepare the config files
 
 Copy the config file `config/config_dro_boreas_rt.yaml` to `config/config_dro.yaml` and edit the parameters as needed.
-You can also customize the RaPlace, registration, and pose-graph config files if desired (all parameters should have reasonable defaults).
+You can also customize the RaPlace, registration, and pose-graph config files if desired (all parameters should have reasonable defaults though).
 
 ### 2. Launch the full pipeline
 
@@ -87,7 +94,7 @@ You can also customize the RaPlace, registration, and pose-graph config files if
 ros2 launch dr_pogo dr_pogo.launch.py
 ```
 
-This starts all five nodes plus an RViz2 visualizer with the bundled `config/rviz.rviz` preset.
+This starts all four estimation nodes plus an RViz2 visualizer with the bundled `config/rviz.rviz` preset.
 
 
 ### 3. Play a Boreas sequence
