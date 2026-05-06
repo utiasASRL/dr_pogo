@@ -210,12 +210,11 @@ class BoreasPlayerNode(Node):
 def main():
     parser = argparse.ArgumentParser(description='Boreas Dataset Player Node')
     parser.add_argument('-p', '--sequence_path', type=str, required=True, help='Path to the Boreas sequence folder')
-    parser.add_argument('-r', '--playback_rate', type=float, default=1.0, help='Playback rate (1.0 = real-time)')
-    parser.add_argument('-n', '--no_wait', action='store_true', help='Send all messages as fast as possible after receiving the odometry result, ignoring the timestamps. Useful for testing the odometry evaluation pipeline offline.')
+    parser.add_argument('-r', '--playback_rate', type=float, default=1.0, help='Playback rate (1.0 = real-time). Set to 0 to publish as fast as possible after receiving the odometry message (produced by the DRO node), ignoring the timestamps. Useful for testing the odometry evaluation pipeline offline.')
     args = parser.parse_args()
 
     rclpy.init()
-    BoreasPlayerNode(args.sequence_path, args.playback_rate, args.no_wait)
+    BoreasPlayerNode(args.sequence_path, args.playback_rate, args.playback_rate == 0)
     rclpy.shutdown()
 
 
