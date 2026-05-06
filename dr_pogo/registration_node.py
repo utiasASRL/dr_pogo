@@ -577,7 +577,6 @@ class RegistrationNode(Node):
             x, y, theta = state
 
             reg_score = local_map_registrator.getRegistrationScore()
-            print("Registration score:", reg_score)
             if reg_score > 0.5:
                 new_result = RegistrationResult(
                     True,
