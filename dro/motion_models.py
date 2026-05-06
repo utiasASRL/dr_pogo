@@ -2,6 +2,11 @@ from enum import Enum
 import numpy as np
 import torch
 
+class MotionModels(str, Enum):
+    const_vel_const_w = "const_vel_const_w",
+    const_body_vel_gyro = "const_body_vel_gyro",
+    const_vel = "const_vel",
+
 
 class MotionModel:
     def __init__(self, state_size, device='cpu'):
@@ -12,8 +17,6 @@ class MotionModel:
         self.t0 = None
 
     def setTime(self, time, t0):
-        self.original_time = time.clone()
-        self.original_t0 = t0.clone()
         self.time = (time - t0).float() * torch.tensor(1.0e-6).to(self.device)
         self.t0 = t0
         self.num_steps = torch.tensor(len(time)).to(self.device)
@@ -81,8 +84,6 @@ class ConstBodyVelGyro(MotionModel):
     def setGyroData(self, gyro_time, gyro_yaw):
         self.first_gyro_time = gyro_time[0]
         self.gyro_time = torch.tensor(gyro_time - self.first_gyro_time).double().to(self.device)
-        self.first_gyro_time *= 1.0e-6
-        self.gyro_time *= 1.0e-6
         self.gyro_yaw = torch.tensor(gyro_yaw).double().to(self.device)
         self.gyro_yaw_original = self.gyro_yaw.clone()
 
@@ -94,11 +95,21 @@ class ConstBodyVelGyro(MotionModel):
 
         self.initialised = True
 
+    def setGyroBias(self, gyro_bias):
+        self.gyro_yaw = self.gyro_yaw_original - gyro_bias
+
+        self.bin_integral = (self.gyro_yaw[1:] + self.gyro_yaw[:-1])*(self.gyro_time[1:] - self.gyro_time[:-1])/2.0
+        self.coeff = (self.gyro_yaw[1:] - self.gyro_yaw[:-1])/(self.gyro_time[1:] - self.gyro_time[:-1])
+        self.coeff = torch.cat((self.coeff, self.coeff[-1].unsqueeze(0)), dim=0)
+        self.offset = self.gyro_yaw[:-1] - self.coeff[:-1]*self.gyro_time[:-1]
+        self.offset = torch.cat((self.offset, self.offset[-1].unsqueeze(0)), dim=0)
 
     def setTime(self, time, t0):
         if not self.initialised:
             raise ValueError("Gyro data not set")
         with torch.no_grad():
+            if not self.initialised:
+                raise ValueError("Gyro data not set")
             super().setTime(time, t0)
             # Get the integral be
             time_local = time.double()*1e-6 - self.first_gyro_time
@@ -140,6 +151,8 @@ class ConstBodyVelGyro(MotionModel):
             
 
 
+            #print("R: ", self.r)
+
     def getVelPosRot(self, state, with_jac = False):
         with torch.no_grad():
             # The state is an array of size 2. Duplicate it for each azimuth
@@ -161,19 +174,46 @@ class ConstBodyVelGyro(MotionModel):
             return body_vel, d_vel_body_d_state, pos, d_pos_d_state, rot, d_rot_d_state
 
     def getPosRotSingle(self, state, time):
-        if isinstance(time, np.int64) or isinstance(time, int):
-            time = torch.tensor(time, dtype=torch.int64).to(self.device)
+        times = torch.arange(self.t0, time, 625, dtype=torch.int64).to(self.device)
+        if times[-1] != time:
+            times = torch.cat((times, time.unsqueeze(0)))
+        self.setTime(times, self.t0)
+
+        pos = (self.R_integral[-1, :, :] @ state.unsqueeze(1)).squeeze()
+        rot = self.r[-1]
+        return pos, rot
+
+        
+class ConstVel(MotionModel):
+    def __init__(self, device='cpu'):
+        super().__init__(2, device)
+
+    def getVelPosRot(self, state, with_jac = False):
         with torch.no_grad():
-            times = torch.arange(self.t0, time, 625, dtype=torch.int64).to(self.device)
-            if times[-1] != time:
-                times = torch.cat((times, time.unsqueeze(0)))
-            og_times = self.original_time.clone()
-            og_t0 = self.original_t0.clone()
+            vel = state.unsqueeze(0).clone()
 
-            self.setTime(times, self.t0)
+            if not with_jac:
+                return vel, None , None
 
-            pos = (self.R_integral[-1, :, :] @ state.unsqueeze(1)).squeeze()
-            rot = self.r[-1]
+            d_vel_d_state = torch.zeros((1, 2, 2), device=self.device)
+            d_vel_d_state[:, 0, 0] = 1
+            d_vel_d_state[:, 1, 1] = 1
 
-            self.setTime(og_times, og_t0)
-            return pos, rot
+
+            return vel, d_vel_d_state, None, None, None, None
+
+            
+        
+    def getPosRotSingle(self, state, time):
+        raise ValueError("Querying single position and rotation is not sensible for constant velocity model")
+
+
+
+# If const_vel_const_w, state is v_0_x, v_0_y, w
+# If const_body_vel_gyro, state is v_0_x, v_0_y
+# If const_vel, state is v_0_x, v_0_y
+MotionModel_lut = {
+    MotionModels.const_vel_const_w: ConstVelConstW,
+    MotionModels.const_body_vel_gyro: ConstBodyVelGyro,
+    MotionModels.const_vel: ConstVel,
+}

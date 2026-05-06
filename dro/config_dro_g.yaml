@@ -1,0 +1,45 @@
+data:
+  data_path: /media/ced/Extreme Pro/data/boreas/original_train/boreas-2020-11-26-12-58
+  multi_sequence: false
+estimation:
+  doppler_cost: false
+  direct_cost: true
+  use_gyro: true
+  gyro_bias_estimation: true
+  max_acceleration: 10.0 # m/s^2 This is used to detect failure modes due to too many outliers. The number 6.0 comes for the max performance of a car that is 0-100 in less than 2.4s (high performance car)
+  vy_bias_prior: 0.0
+
+radar:
+  ft: 76.04E9
+  meas_freq: 1600.0
+  del_f: 893.0E6
+  beta_corr_fact: 0.80
+  range_offset: -0.31
+  doppler_enabled: false
+  chirp_up: true # Ignored if doppler_enabled is true (the true/false might be inverted)
+
+imu:
+  min_time_bias_init: 1.0
+  type: 'applanix'
+direct:
+  min_range: 4.0
+  max_range: 70.0
+  max_local_map_range: 120.0
+  local_map_res: 0.1
+  local_map_update_alpha: 0.1 # The local map is updated as (1-alpha)*prev_map + alpha*current_scan
+log:
+  verbose: true
+  display: true
+  save_images: false
+doppler:
+  max_range: 200.0
+  min_range: 4.0
+gp:
+  lengthscale_az: 2.0
+  lengthscale_range: 4.0
+  sz: 0.6
+log:
+  display: false
+  save_images: true
+  save_local_maps: false
+  verbose: true

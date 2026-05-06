@@ -1,7 +1,6 @@
 #pragma once
 
 #include <eigen3/Eigen/Dense>
-#include <eigen3/Eigen/Geometry>
 #include <fstream>
 #include <vector>
 #include <array>
@@ -55,10 +54,7 @@ inline std::array<double, 3> combinePoses(
     return matToXYTheta(combined_mat);
 }
     
-inline Eigen::Quaterniond yawToQuaternion(double yaw)
-{
-    return Eigen::Quaterniond(Eigen::AngleAxisd(yaw, Eigen::Vector3d::UnitZ()));
-}
+
 
 
 

@@ -91,41 +91,13 @@ void PoseGraph::addOdometryEdge(const int64_t t0, const int64_t t1, std::array<d
 
 void PoseGraph::addLoopClosureRotEdge(const int64_t t0, const int64_t t1, std::array<double, 3> relative_pose)
 {
-    int64_t local_t0 = t0;
-    int64_t local_t1 = t1;
-    if(node_indices_.find(t0) == node_indices_.end())
+    if(node_indices_.find(t0) == node_indices_.end() || node_indices_.find(t1) == node_indices_.end())
     {
-        // Look for the closest timestamp to t0, if it is within 5ms use it as t0
-        auto it = node_indices_.lower_bound(t0);
-        if(it != node_indices_.end() && std::abs(it->first - t0) <= 5000)
-        {
-            local_t0 = it->first;
-            std::cout << "Using closest timestamp " << local_t0 << " for loop closure edge t0 instead of " << t0 << std::endl;
-        }
-        else
-        {
-            std::cout << "No close timestamp found for loop closure edge t0 " << t0 << ", skipping this edge." << std::endl;
-            return;
-        }
-    }
-    if(node_indices_.find(t1) == node_indices_.end())
-    {
-        // Look for the closest timestamp to t1, if it is within 5ms use it as t1
-        auto it = node_indices_.lower_bound(t1);
-        if(it != node_indices_.end() && std::abs(it->first - t1) <= 5000)
-        {
-            local_t1 = it->first;
-            std::cout << "Using closest timestamp " << local_t1 << " for loop closure edge t1 instead of " << t1 << std::endl;
-        }
-        else
-        {
-            std::cout << "No close timestamp found for loop closure edge t1 " << t1 << ", skipping this edge." << std::endl;
-            return;
-        }
+        throw std::runtime_error("Loop closure edge contains unknown timestamps.");
     }
 
-    size_t index0 = node_indices_[local_t0];
-    size_t index1 = node_indices_[local_t1];
+    size_t index0 = node_indices_[t0];
+    size_t index1 = node_indices_[t1];
 
     if(index0 >= node_poses_.size() || index1 >= node_poses_.size())
     {
@@ -139,41 +111,13 @@ void PoseGraph::addLoopClosureRotEdge(const int64_t t0, const int64_t t1, std::a
 
 void PoseGraph::addLoopClosurePosEdge(const int64_t t0, const int64_t t1, std::array<double, 3> relative_pose)
 {
-    int64_t local_t0 = t0;
-    int64_t local_t1 = t1;
-    if(node_indices_.find(t0) == node_indices_.end())
+    if(node_indices_.find(t0) == node_indices_.end() || node_indices_.find(t1) == node_indices_.end())
     {
-        // Look for the closest timestamp to t0, if it is within 5ms use it as t0
-        auto it = node_indices_.lower_bound(t0);
-        if(it != node_indices_.end() && std::abs(it->first - t0) <= 5000)
-        {
-            local_t0 = it->first;
-            std::cout << "Using closest timestamp " << local_t0 << " for loop closure edge t0 instead of " << t0 << std::endl;
-        }
-        else
-        {
-            std::cout << "No close timestamp found for loop closure edge t0 " << t0 << ", skipping this edge." << std::endl;
-            return;
-        }
-    }
-    if(node_indices_.find(t1) == node_indices_.end())
-    {
-        // Look for the closest timestamp to t1, if it is within 5ms use it as t1
-        auto it = node_indices_.lower_bound(t1);
-        if(it != node_indices_.end() && std::abs(it->first - t1) <= 5000)
-        {
-            local_t1 = it->first;
-            std::cout << "Using closest timestamp " << local_t1 << " for loop closure edge t1 instead of " << t1 << std::endl;
-        }
-        else
-        {
-            std::cout << "No close timestamp found for loop closure edge t1 " << t1 << ", skipping this edge." << std::endl;
-            return;
-        }
+        throw std::runtime_error("Loop closure edge contains unknown timestamps.");
     }
 
-    size_t index0 = node_indices_[local_t0];
-    size_t index1 = node_indices_[local_t1];
+    size_t index0 = node_indices_[t0];
+    size_t index1 = node_indices_[t1];
 
     if(index0 >= node_poses_.size() || index1 >= node_poses_.size())
     {

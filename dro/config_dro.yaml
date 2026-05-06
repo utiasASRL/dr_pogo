@@ -1,0 +1,54 @@
+data:
+  data_path: /home/ced/Documents/data/boreas/doppler/rss/all/boreas-2024-12-04-12-34
+  multi_sequence: false
+direct:
+  local_map_res: 0.1
+  local_map_update_alpha: 0.1
+  max_local_map_range: 120.0
+  max_range: 70.0
+  min_range: 4.0
+doppler:
+  max_range: 200.0
+  min_range: 4.0
+estimation:
+  T_axle_radar:
+  - - 0.99938287
+    - 0.03512667
+    - 0.0
+    - 0.51
+  - - 0.03512667
+    - -0.99938287
+    - 0.0
+    - 0.0
+  - - 0.0
+    - 0.0
+    - -1.0
+    - 1.945
+  - - 0.0
+    - 0.0
+    - 0.0
+    - 1.0
+  ang_vel_bias: 0.0006
+  direct_cost: true
+  doppler_cost: true
+  estimate_doppler_vy_bias: true
+  gyro_bias_estimation: false
+  max_acceleration: 10.0
+  use_gyro: false
+  vy_bias_prior: 0.11
+gp:
+  lengthscale_az: 2.0
+  lengthscale_range: 4.0
+  sz: 0.6
+log:
+  display: false
+  save_images: true
+  save_local_maps: false
+  verbose: true
+radar:
+  beta_corr_fact: 0.944
+  del_f: 893.0E6
+  doppler_enabled: true
+  ft: 76.04E9
+  meas_freq: 1600.0
+  range_offset: -0.31

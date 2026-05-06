@@ -1,140 +1,110 @@
-# Dr-PoGO: Direct Radar Pose-Graph Optimization
-
-Dr-PoGO is a radar-based SLAM framework.
-It combines **Direct Radar Odometry (DRO)** with **RaPlace** loop-closure detection and a **pose-graph optimizer** to produce globally consistent trajectories from FMCW radar data.
-
-This branch contains a ROS 2 implementation of the full Dr-PoGO pipeline for online operation and real-time visualization in RViz2.
-The branch `offline` contains the standalone version of the pipeline for offline processing as used in the original paper.
-
-If you find this code useful, please consider citing our paper:
-
-**Dr-PoGO**
-```
-@inproceedings{legentil2026drpogo,
-  title={Dr-PoGO: Direct Radar Pose-Graph Optimization},
-    author={Le Gentil, Cedric and Weican, Li and Brizi, Leonardo and Barfoot, Timothy D.},
-  booktitle={IEEE International Conference on Robotics and Automation (ICRA)},
-  year={2026}
-}
-```
-
-**DRO**
-```
-@inproceedings{legentil2025dro,
-  title={Dro: Doppler-aware direct radar odometry},
-  author={Le Gentil, Cedric and Brizi, Leonardo and Lisus, Daniil and Qiao, Xinyuan and Grisetti, Giorgio and Barfoot, Timothy D.},
-  booktitle={Robotics: Science and Systems (RSS)},
-  year={2025}
-}
-```
-
-The loop-closure detection module is directly adapted from RaPlace's original code [here](https://github.com/hyesu-jang/RaPlace), so please also consider citing their work.
+**OFFLINE VERSION OF DR-POGO USED FOR THE PAPER, NOT MAINTAINED OR TESTED SINCE**
 
 
-
-## Architecture overview
-
-
-| Node | Language | Role |
-|------|----------|------|
-| `boreas_player` | Python | Replays a Boreas sequence (radar + IMU) as ROS 2 topics |
-| `dro_node` | Python | Doppler-aware direct radar odometry |
-| `raplace_node` | Python | Loop-closure detection using RaPlace |
-| `registration_node` | Python | Feature-based registration and direct refinement of loop-closure transformations |
-| `pogo_node` | C++ | Pose-graph optimizer (Ceres) |
+# DRPoGO: Direct Radar Map Alighnment for Loop Closure in Pose Graph Optimization
+This repository provides the codebase for radar-based coarse registration and evaluation against ground truth. The pipeline includes local map generation using DRO, loop closure proposal using RaPlace, and pose graph optimization.
 
 ## Dependencies
 
-### ROS 2 (provided by your ROS 2 installation)
-- `rclpy`, `rclcpp`
-- `sensor_msgs`, `nav_msgs`, `geometry_msgs`, `std_msgs`
-- `message_filters`
-- `cv_bridge`
-- `yaml-cpp`
-
-### C++ libraries (system)
-- [Ceres Solver](http://ceres-solver.org/)
-- [Eigen3](https://eigen.tuxfamily.org/)
-
-These can typically be installed via your package manager (e.g., `sudo apt install libceres-dev libeigen3-dev` on Ubuntu).
-
-### Python (pip)
-Install all Python dependencies with:
-```bash
+All dependencies should be in `requirements.txt`. Please install them in you virtual environment with
+```
 pip install -r requirements.txt
 ```
 
-The `requirements.txt` covers: `numpy`, `pandas`, `scipy`, `scikit-learn`, `scikit-image`, `opencv-python`, `matplotlib`, `PyYAML`, `pyboreas`, `torch`, `torchvision`.
-
-## Build
-
-First clone this repository into your ROS 2 workspace's `src/` directory, then build with:
+For __pogo__ you will need Eigen3 and Ceres Solver:
 ```bash
-cd <your_ros2_workspace>/src
-git clone git@github.com:utiasASRL/dr_pogo.git
+sudo apt-get install python3-tk
+sudo apt-get install python3-dev
+sudo apt-get install build-essential
+sudo apt-get install cmake
+sudo apt-get install libeigen3-dev
+sudo apt-get install libceres-dev
+sudo apt-get install libyaml-cpp-dev
 ```
 
-Then build the workspace with:
+## Compile (pogo part)
+
+To compile pogo:
 ```bash
-cd <your_ros2_workspace>
-colcon build --packages-select dr_pogo --symlink-install
-source install/setup.bash
+cd pogo
+mkdir -p build
+cd build
+cmake ..
+make -j8
+cd ../..
 ```
 
-## Usage
+## Run the full pipeline
 
-### 1. Prepare the config files
+You need to run the following steps in order:
 
-Copy the config file `config/config_dro_boreas_rt.yaml` to `config/config_dro.yaml` and edit the parameters as needed.
-You can also customize the RaPlace, registration, and pose-graph config files if desired (all parameters should have reasonable defaults though).
+1. Run odometry (DRO)
+2. Run the loop closure detection (RaPlace)
+3. Run the coarse registration (Coarse Registration)
+4. Run the pose graph optimization (PoGO)
 
-### 2. Launch the full pipeline
+### Run DRO
+First, download data from the Boreas dataset [here](https://www.boreas.utias.utoronto.ca/#/download). DRO generates local maps that accounts for motion distortion of the radar scans.
 
-```bash
-ros2 launch dr_pogo dr_pogo.launch.py
+Then copy the example config file `DRO/config_example.yaml` to `DRO/config.yaml` and modify the parameters as needed, especially the `data_path` as follows.
+```yaml
+  data:
+    data_path: /absolute/path/to/Boreas/<sequence>
 ```
 
-This starts all four estimation nodes plus an RViz2 visualizer with the bundled `config/rviz.rviz` preset.
-
-
-### 3. Play a Boreas sequence
-
+In the root of the repository, run the following command to generate local maps:
 ```bash
-ros2 run dr_pogo boreas_player -p <path_to_sequence> -r <playback_rate>
-# Example:
-ros2 run dr_pogo boreas_player -p /data/boreas/boreas-2024-12-03-12-54 -r 1.0
+python dro/radar_gp_state_estimation.py
 ```
 
-You can also make it play as fast as DRO allows by setting `-r 0` (preventing to wait between messages if your hardware is fast enough to process the data faster than real-time, and allows for slower hardware to keep up by slowing down the playback rate as needed).
+It will output the local maps in the `output/<SEQ-NAME>/local_maps` folder, each names with the radar scan's first timestamp. 
 
-## Configuration
+### Run RaPlace
+Simply run RaPlace as follows in the root of the repository (all the paths should be autonomatically using what was specified in the DRO config file):
+```bash
+python raplace/raplace.py
+```
 
-All YAML config files live under `config/`.
+It will generate a CSV of proposed scan pairs in the `output/<SEQ-NAME>/raplace_loops.csv` folder.
+Each row contains the following columns:
+- `time_i`: Timestamp of the first scan in the pair \[s\].
+- `time_j`: Timestamp of the second scan in the pair \[s\].
+- `scan_i_name`: Name of the first scan in the pair.
+- `scan_j_name`: Name of the second scan in the pair.
+- `score`: The score of the proposed loop closure as defined in RaPlace (not used)
+- `min_dist`: The minimum dist between the scores as defined in RaPlace (not used)
 
-| File | Node | Key parameters |
-|------|------|----------------|
-| `config_dro.yaml` | `dro_node` | Sensor extrinsics (`T_axle_radar`), range limits, GP lengthscales |
-| `config_raplace.yaml` | `raplace_node` | `min_time_diff`, `max_odom_drift`, `max_img_size` |
-| `config_registration.yaml` | `registration_node` | `lowe_ratio`, `ransac_thr`, `max_img_size` |
-| `config_pogo.yaml` | `pogo_node` | Odometry/loop noise std-devs, loss scales, `estimate_bias` |
+### Run the feature-based coarse registration
+
+In the root of the repository, run the following command:
+```bash
+python coarse_registration/coarse_registration.py
+```
+
+It will generate a CSV of coarse registration results in the `output/<SEQ-NAME>/coarse_registration.csv` folder.
+Each row contains the following columns:
+- `scan_i_name`: Name of the first scan in the pair.
+- `scan_j_name`: Name of the second scan in the pair.
+- `x`, `y`, `theta`: The estimated transformation from scan i to scan j.
+
+### Run PoGO
+
+You can modify the configuration file `pogo/config.yaml` to adjust the parameters for the pose graph optimization.
+To run, in the root of the repository, run the following command:
+```bash
+pogo/build/pogo
+```
+
+### For paper and evaluation
+
+To plot the trajectory estimates and get metrics:
+```bash
+python script_for_paper/eval.py
+```
+This will diplay the ATE errors and write to file different trajectory estimates (aligned with the 1st pose in `<SEQ-NAME>_trajectories.pdf` or fully aligned in `<SEQ-NAME>_XXXX_aligned.pdf`)
+
+## Release TODOs
 
 
-## Custom messages
-
-| Message | Fields |
-|---------|--------|
-| `RadarInfo` | Radar scan metadata (timestamps, frequency, etc.) |
-| `LocalMapInfo` | Accumulated local map header, resolution, 2-D pose (`x`, `y`, `theta`) |
-| `LoopCandidate` | Query/candidate timestamps, match score, image paths, local map resolution |
-
-## Output
-
-TODO: add more details on the output (e.g., what files are written, where, and in what format)
-
-### TODOs
-
-- [ ] Improve documentation
-- [ ] Make DRO faster with compilation (e.g., using `torch.compile` but need some tricks)
-- [ ] Clear the printouts
-- [ ] Uniformize the output folder writing across nodes (currently `dro_node` writes local maps and cumulative returns, `pogo_node` writes the optimized trajectory)
-- [ ] Add the 3D odometry output as for 3DRO
+- [ ] Create a script to get the pogo parameters automatically from a calib sequence
+- [ ] Check the "save local maps" option in DRO (seems to not be as wanted)

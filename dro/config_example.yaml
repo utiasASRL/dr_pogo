@@ -1,0 +1,51 @@
+data:
+  multi_sequence: false  # If true, the data path contains multiple sequences like data_path/{boereas-xxxx-xx-xx-xx-xx; boreas-yyyy-yy-yy-yy-yy; ...}
+  # data_path: '/home/ced/Documents/data/boreas/original_train'
+  data_path: '/home/liweican-2025-research/data/boreas-2021-04-08-12-44'
+
+  #multi_sequence: false  # If false, the path should point to a single sequence like
+  #data_path: '/home/ced/Documents/data/boreas/original_train/boreas-2020-12-01-13-26'
+                        
+
+estimation:
+  doppler_cost: false
+  direct_cost: true
+  use_gyro: true
+  gyro_bias_estimation: true
+  max_acceleration: 10.0 # m/s^2 This is used to detect failure modes due to too many outliers. The number 6.0 comes for the max performance of a car that is 0-100 in less than 2.4s (high performance car)
+  vy_bias_prior: 0.0
+
+gp:
+  lengthscale_az: 2.0
+  lengthscale_range: 4.0
+  sz: 0.6
+
+radar:
+  ft: 76.04E9
+  meas_freq: 1600.0
+  del_f: 893.0E6
+  beta_corr_fact: 0.80
+  range_offset: -0.31
+  doppler_enabled: false
+  chirp_up: true # Ignored if doppler_enabled is true (the true/false might be inverted)
+
+imu:
+  min_time_bias_init: 1.0
+  type: 'applanix'
+
+doppler:
+  min_range: 4.0
+  max_range: 200.0
+
+direct:
+  min_range: 4.0
+  max_range: 120.0
+  max_local_map_range: 76.288
+  local_map_res: 0.2384
+  # local_map_res: 0.07
+  local_map_update_alpha: 0.1 # The local map is updated as (1-alpha)*prev_map + alpha*current_scan
+
+log:
+  verbose: true
+  display: false
+  save_images: true
