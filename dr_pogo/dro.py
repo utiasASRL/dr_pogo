@@ -8,8 +8,6 @@ from dro_motion_models import ConstBodyVelGyro, ConstVelConstW
 from sklearn.metrics import pairwise_distances
 from scipy.spatial.transform import Rotation as R
 
-os.environ['TORCHINDUCTOR_CACHE_DIR'] = "/tmp/torchinductor_cache"
-os.environ['TRITON_CACHE_DIR'] = "/tmp/triton_cache"
 
 kDefaultDroOpts = {
     'estimation': {
@@ -193,9 +191,6 @@ class Dro():
                 # Correct for the Doppler shift
                 prev_shifted = self.perLineInterpolation(self.polar_intensity[:,:self.max_id], per_line_shift)
 
-                torch.cuda.synchronize()
-                temp_t2 = time.time()
-                print(f"Per line interpolation time: {temp_t2 - temp_t1:.3f} seconds")
 
 
                 rot_mats_transposed = torch.concatenate((torch.cos(prev_scan_rot), torch.sin(prev_scan_rot), -torch.sin(prev_scan_rot), torch.cos(prev_scan_rot)), dim=1).reshape((-1,2,2))
@@ -203,9 +198,6 @@ class Dro():
                 pos = rot_mats_transposed@(-prev_scan_pos + frame_pos.reshape((-1,2,1))) 
                 rot = -prev_scan_rot + frame_rot
 
-                torch.cuda.synchronize()
-                temp_t3 = time.time()
-                print(f"Pose correction time: {temp_t3 - temp_t2:.3f} seconds")
 
                 polar_coord_corrected = self.polarCoordCorrection(pos, rot)
                 polar_coord_corrected[:,:,0] -= (self.azimuths[0])
@@ -216,41 +208,19 @@ class Dro():
                 prev_shifted = torch.concatenate((prev_shifted, prev_shifted[0,:].unsqueeze(0)), dim=0)
                 polar_target = self.bilinearInterpolation(prev_shifted, polar_coord_corrected)
 
-                torch.cuda.synchronize()
-                temp_t4 = time.time()
-                print(f"Polar coordinate correction and interpolation time: {temp_t4 - temp_t3:.3f} seconds")
 
                 # Get the coordinates of the local map in the undistorted polar image
-                temp_polar_to_interp = self.local_map_polar.clone()
-                temp_polar_to_interp[:,:,0] -= (self.azimuths[0])
-                temp_polar_to_interp[temp_polar_to_interp[:,:,0]<0] = temp_polar_to_interp[temp_polar_to_interp[:,:,0]<0] + torch.tensor((2*torch.pi, 0)).to(self.device)
-                temp_polar_to_interp[:,:,0] *= ((self.nb_azimuths) / (2*torch.pi))
-                temp_polar_to_interp[:,:,1] -= (res/2.0)
-                temp_polar_to_interp[:,:,1] /= res
+                temp_polar_to_interp = self.prepareLocalMapPolarCoords(self.local_map_polar, res)
                 polar_target = torch.concatenate((polar_target, polar_target[0,:].unsqueeze(0)), dim=0)
-                torch.cuda.synchronize()
-                temp_t45 = time.time()
                 local_map_update = self.bilinearInterpolation(polar_target, temp_polar_to_interp)
 
-                torch.cuda.synchronize()
-                temp_t5 = time.time()
-                print(f"Local map coordinate preparation time: {temp_t45 - temp_t4:.3f} seconds")
-                print(f"Local map interpolation time: {temp_t5 - temp_t45:.3f} seconds")
 
                 # Update the local map
                 if self.step_counter == 1:
                     self.local_map = local_map_update
                 else:
-                    torch.cuda.synchronize()
-                    temp_t55 = time.time()
                     self.moveLocalMap(frame_pos, frame_rot)
-                    torch.cuda.synchronize()
-                    temp_t56 = time.time()
                     self.local_map = self.one_minus_alpha * self.local_map + self.alpha * local_map_update
-                    torch.cuda.synchronize()
-                    temp_t57 = time.time()
-                    print(f"Local map move time: {temp_t56 - temp_t55:.3f} seconds")
-                    print(f"Local map update time: {temp_t57 - temp_t56:.3f} seconds")
 
 
                 # Publish the local map for dr_pogo
@@ -268,10 +238,6 @@ class Dro():
                 self.local_map_blurred = torchvision.transforms.functional.gaussian_blur(self.local_map.unsqueeze(0).unsqueeze(0), 3).squeeze()
                 normalizer = torch.max(self.local_map) / torch.max(self.local_map_blurred)
                 self.local_map_blurred *= normalizer
-
-                torch.cuda.synchronize()
-                t2 = time.time()
-                print(f"Pose and local map update time: {t2 - temp_t1:.3f} seconds")
 
             torch.cuda.synchronize()
             t1 = time.time()
@@ -315,7 +281,6 @@ class Dro():
                 self.odd_bias = temp_odd_img.clone()
 
                 mask_doppler = self.temp_even_img != 0
-                print(f"Number of non zero values in the doppler image: {torch.sum(mask_doppler).item()}")
                 self.temp_even_img_sparse = self.temp_even_img[mask_doppler]
                 # Get the idx of the non zero values
                 self.doppler_az_ids_sparse = torch.arange(self.nb_azimuths, device=self.device).unsqueeze(-1).repeat(1,self.temp_even_img.shape[1])[mask_doppler]
@@ -347,6 +312,7 @@ class Dro():
             mask_direct[:, :self.min_range_idx_direct] = False
             self.polar_intensity_sparse = temp_intensity[mask_direct]
 
+
             self.direct_r_sparse = self.range_vec.unsqueeze(0).repeat(self.nb_azimuths, 1)[mask_direct]
             self.direct_az_ids_sparse = torch.arange(self.nb_azimuths, device=self.device).unsqueeze(-1).repeat(1,self.max_range_idx_direct)[mask_direct]
             self.direct_r_ids_sparse = torch.arange(self.max_range_idx_direct, device=self.device).unsqueeze(0).repeat(self.nb_azimuths, 1)[mask_direct]
@@ -372,22 +338,12 @@ class Dro():
             self.direct_az_ids_odd = self.direct_az_ids_sparse[self.mask_direct_odd]
 
 
-            torch.cuda.synchronize()
-            t2 = time.time()
-            print(f"Preparation time (no local map): {t2 - t1:.3f} seconds")
-
             ### Perform the optimisation
-            torch.cuda.synchronize()
-            t1 = time.time()
             if self.motion_model.state_size == 3 and self.use_gyro:
                 self.state_init[:2] = self.state_init[:2]*(1+self.state_init[2]*delta_time)
             if torch.norm(self.state_init[:2]) < 0.75:
                 self.state_init[:] = 0.0
             result = self.solve(self.state_init, 250, 1e-6, 1e-5)
-
-            torch.cuda.synchronize()
-            t2 = time.time()
-            print(f"Optimization time: {t2 - t1:.3f} seconds")
 
 
             # Check if the the angular velocity is not too high
@@ -522,12 +478,13 @@ class Dro():
             temp_X1[:, 1] = temp_X1[:, 1] / l_range
             temp_X2[:, 1] = temp_X2[:, 1] / l_range
             # Replace dist with np only operations to avoid potential issues with torch and the GPU
-            dist = np.sum((temp_X1[:, np.newaxis, :] - temp_X2[np.newaxis, :, :])**2, axis=2)
+            dist = np.sum((X1[:, np.newaxis, :] - X2[np.newaxis, :, :])**2, axis=2)
             return np.exp(-dist/2)
 
 
 
     # Get the polar images from the input image using the GP interpolation
+    @torch.compile
     def getUpDownPolarImages(self, img):
         # Prepare the input for the torch convolution
         with torch.no_grad():
@@ -599,8 +556,20 @@ class Dro():
 
 
             
+    @torch.compile(dynamic=True)
+    def prepareLocalMapPolarCoords(self, local_map_polar, res):
+        with torch.no_grad():
+            temp_polar_to_interp = local_map_polar.clone()
+            temp_polar_to_interp[:,:,0] -= (self.azimuths[0])
+            temp_polar_to_interp[temp_polar_to_interp[:,:,0]<0] = temp_polar_to_interp[temp_polar_to_interp[:,:,0]<0] + torch.tensor((2*torch.pi, 0)).to(self.device)
+            temp_polar_to_interp[:,:,0] *= ((self.nb_azimuths) / (2*torch.pi))
+            temp_polar_to_interp[:,:,1] -= (res/2.0)
+            temp_polar_to_interp[:,:,1] /= res
+            return temp_polar_to_interp
+
+
     # Perform the bilinear interpolation of the image im at the coordinates az_r (az the vertical axis, r the horizontal axis)
-    #@torch.compile
+    @torch.compile
     def bilinearInterpolation(self, im, az_r):
         with torch.no_grad():
             az0 = torch.floor(az_r[:, :, 0]).int()
@@ -636,6 +605,7 @@ class Dro():
 
 
     # Same a bilinearInterpolation_ but for the sparse case
+    @torch.compile
     def bilinearInterpolationSparse(self, im, az_r):
         with torch.no_grad():
             az0 = torch.floor(az_r[:, 0]).int()
@@ -744,6 +714,7 @@ class Dro():
 
     # Perform linear interpolation of the image im using the shift (in pixels)
     # (used for correcting the doppler shift when undistorting the scan)
+    @torch.compile
     def perLineInterpolation(self, img, shift):
         with torch.no_grad():
             shift_int = torch.floor(shift).int()
@@ -760,6 +731,7 @@ class Dro():
             return interp
 
     # Correcting the scan polar coordinates to cartesian coordinates based on the per azimuth poses for the direct cost function
+    @torch.compile
     def polarToCartCoordCorrectionSparse(self, pos, rot, doppler_shift):
         with torch.no_grad():
             # Get the polar coordinates of the image
@@ -819,30 +791,10 @@ class Dro():
 
             return cart, d_cart_d_rot, d_cart_d_shift
 
-    def getCartesianCoordinates(self, pos, rot):
-        with torch.no_grad():
-            # Get the polar coordinates of the image
-            polar_coord = self.polar_coord_raw_gp_infered
-
-            c_az = torch.cos(polar_coord[:, :, 0])
-            s_az = torch.sin(polar_coord[:, :, 0])
-            x = c_az * polar_coord[:, :, 1]
-            y = s_az * polar_coord[:, :, 1]
-
-            # Rotate the coordinates
-            c_rot = torch.cos(rot)
-            s_rot = torch.sin(rot)
-            x_rot = x * c_rot - y * s_rot
-            y_rot = x * s_rot + y * c_rot
-
-            # Translate the coordinates
-            x_trans = x_rot+pos[:, 0]
-            y_trans = y_rot+pos[:, 1]
-
-            return x_trans, y_trans
 
     # Correcting the scan polar coordinates to cartesian coordinates based on the per azimuth poses
     # (used for scan undistortion before updating the local map)
+    @torch.compile
     def polarCoordCorrection(self, pos, rot):
         with torch.no_grad():
             # Get the polar coordinates of the image
@@ -875,6 +827,7 @@ class Dro():
 
     # Perform the linear interpolation of the image per row based on the estimated Doppler shift
     # (used in Doppler-based velocity constraint)
+    @torch.compile
     def imgDopplerInterpAndJacobian(self, shift):
         with torch.no_grad():
             shift_int = torch.floor(-shift).int()
@@ -980,7 +933,6 @@ class Dro():
                 self.max_diff_vel = self.motion_model.time[-1] * self.max_acc
             
             
-
             return state
 
     # Helper function to get the local map indices from the cartesian coordinates
@@ -992,6 +944,7 @@ class Dro():
             return out
 
     # Same as cartToLocalMapID_ but for the sparse case
+    @torch.compile
     def cartToLocalMapIDSparse(self, xy):
         with torch.no_grad():
             out = torch.empty_like(xy, device=self.device)
@@ -1002,7 +955,7 @@ class Dro():
 
 
     # Move localMap to the new position and rotation (used for updating the local map)
-    #@torch.compile
+    @torch.compile
     def moveLocalMap(self, pos, rot):
         with torch.no_grad():
             # Set to zero the first and last row and column of the localMap
@@ -1025,6 +978,7 @@ class Dro():
 
 
     # Get the Doppler velocity separately from the odometry step for the tuning of lateral velocity bias
+    @torch.compile
     def getDopplerVelocity(self):
         with torch.no_grad():
             if not self.use_doppler:

@@ -55,8 +55,8 @@ class DroNode(Node):
 
         # Load the config file and populate the DRO options
         config_file_path = "config/config_dro.yaml"
-        #base_path = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
-        #config_file_path = os.path.join(base_path, "share/dr_pogo", config_file_path)
+        base_path = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+        config_file_path = os.path.join(base_path, "share/dr_pogo", config_file_path)
         print(f"Loading DRO configuration from {config_file_path}")
         with open(config_file_path, 'r') as file:
             config = yaml.safe_load(file)
