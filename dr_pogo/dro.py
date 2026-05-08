@@ -31,7 +31,9 @@ kDefaultDroOpts = {
         'meas_freq': 1600.0,
         'beta_corr_fact': 0.944,
         'range_offset': -0.31,
-        'nb_azimuths': 400,
+        'nb_azimuths': None,
+        'resolution': None,
+        'doppler_enabled': None,
     },
     'direct': {
         'min_range': 4.0,
@@ -63,6 +65,7 @@ class Dro():
             self.kImgPadding = 200
             self.kOptFirstStep = 0.1
 
+            self.max_diff_vel = opts['estimation']['max_acceleration'] * 0.25
 
             # Load the motion model
             self.use_gyro = opts['estimation']['use_gyro']
@@ -128,11 +131,197 @@ class Dro():
 
             self.kImgPadding = torch.tensor(self.kImgPadding).to(self.device)
 
+            if opts['radar']['nb_azimuths'] is not None and opts['radar']['resolution'] is not None and opts['radar']['doppler_enabled'] is not None:
+                temp_radar_info = {
+                    'resolution': opts['radar']['resolution'],
+                    'chirps': [0, 1] if opts['radar']['doppler_enabled'] else [0, 0],
+                }
+
+                self.initialize(temp_radar_info)
+
+                self.warmupCompiledCallables(opts)
+
+
+
+    # Ugly code to force the compilation of the callables during initialization, so that the first call to odometryStep is not much slower than the others.
+    # Can be refactored later for readability.
+    def warmupCompiledCallables(self, opts):
+        if os.environ.get("DRO_COMPILE_DEBUG", "0") == "1":
+            try:
+                import torch._logging as torch_logging
+                torch_logging.set_logs(recompiles=True, guards=True, dynamic=True)
+            except Exception:
+                print("DRO_COMPILE_DEBUG enabled but torch._logging.set_logs is unavailable")
+
+        self.getUpDownPolarImages = torch.compile(self.getUpDownPolarImages, dynamic=True)
+        self.prepareLocalMapPolarCoords = torch.compile(self.prepareLocalMapPolarCoords, dynamic=True)
+        self.bilinearInterpolation = torch.compile(self.bilinearInterpolation, dynamic=True)
+        self.bilinearInterpolationSparse = torch.compile(self.bilinearInterpolationSparse, dynamic=True)
+        self.perLineInterpolation = torch.compile(self.perLineInterpolation, dynamic=True)
+        self.polarToCartCoordCorrectionSparse = torch.compile(self.polarToCartCoordCorrectionSparse, dynamic=True)
+        self.polarCoordCorrection = torch.compile(self.polarCoordCorrection)
+        self.imgDopplerInterpAndJacobian = torch.compile(self.imgDopplerInterpAndJacobian, dynamic=True)
+        self.cartToLocalMapIDSparse = torch.compile(self.cartToLocalMapIDSparse, dynamic=True)
+        self.moveLocalMap = torch.compile(self.moveLocalMap, dynamic=True)
+
+        # Warm up compiled callables so compile happens during initialization.
+        nb_azimuths = opts['radar']['nb_azimuths']
+        self.nb_azimuths = torch.tensor(nb_azimuths).to(self.device)
+        self.azimuths = torch.linspace(0.0, 2*torch.pi, nb_azimuths).to(self.device)
+        res = opts['radar']['resolution']
+        if 'doppler' in opts:
+            nb_ranges = int(max(float(opts['doppler']['max_range']) / res, float(opts['direct']['max_range']) / res)) + 1
+        else:
+            nb_ranges = int(float(opts['direct']['max_range']) / res) + 1
+        warmup_img = torch.zeros((nb_azimuths, nb_ranges), device=self.device)
+        # Populate a fake scan with enough non-zero values to build realistic sparse masks.
+        nb_non_zero = min(120000, warmup_img.numel())
+        indices = torch.randperm(warmup_img.numel(), device=self.device)[:nb_non_zero]
+        warmup_img.view(-1)[indices] = 1.0
+        warmup_img_np = warmup_img.detach().cpu().numpy().astype(np.float32)
+
+        self.timestamps = torch.arange(nb_azimuths, device=self.device).float()
+        if self.use_gyro:
+            warmup_gyro_time = self.timestamps.detach().cpu().numpy().astype(np.float64)
+            warmup_gyro_yaw = np.zeros_like(warmup_gyro_time)
+            self.motion_model.setGyroData(warmup_gyro_time, warmup_gyro_yaw)
+        self.motion_model.setTime(self.timestamps, self.timestamps[0])
+        dirs = torch.empty((self.nb_azimuths, 2), device=self.device)
+        dirs[:, 0] = torch.cos(self.azimuths)
+        dirs[:, 1] = torch.sin(self.azimuths)
+        self.vel_to_bin_vec = self.vel_to_bin * dirs
+        self.chirp_up = True
+        self.prev_chirp_up = True
+
+        # Build Doppler sparse tensors using the same odometryStep preparation logic.
+        if self.use_doppler:
+            odd_img, even_img = self.getUpDownPolarImages(warmup_img_np[:, self.min_range_idx:(self.max_range_idx+1)])
+            self.temp_even_img = torch.cat((
+                torch.zeros((self.nb_azimuths, self.kImgPadding), dtype=torch.float32).to(self.device),
+                even_img,
+                torch.zeros((self.nb_azimuths, self.kImgPadding), dtype=torch.float32).to(self.device)
+            ), dim=1)
+            temp_odd_img = torch.cat((
+                torch.zeros((self.nb_azimuths, self.kImgPadding), dtype=torch.float32).to(self.device),
+                odd_img,
+                torch.zeros((self.nb_azimuths, self.kImgPadding), dtype=torch.float32).to(self.device)
+            ), dim=1)
+
+            self.odd_coeff = torch.empty_like(self.temp_even_img, device=self.device)
+            self.odd_coeff[:, :-1] = temp_odd_img[:, 1:] - temp_odd_img[:, :-1]
+            self.odd_coeff[:, -1] = 0
+            self.odd_bias = temp_odd_img.clone()
+
+            mask_doppler = self.temp_even_img != 0
+            self.temp_even_img_sparse = self.temp_even_img[mask_doppler]
+            self.doppler_az_ids_sparse = torch.arange(self.nb_azimuths, device=self.device).unsqueeze(-1).repeat(1, self.temp_even_img.shape[1])[mask_doppler]
+            self.doppler_bin_vec_sparse = torch.arange(self.nb_bins, device=self.device).unsqueeze(0).repeat(self.nb_azimuths, 1)[mask_doppler]
+
+        # Build direct sparse tensors using the same odometryStep preparation logic.
+        max_range_idx_direct = int(self.max_range_idx_direct.item())
+        temp_intensity = warmup_img[:, :max_range_idx_direct]
+        mask_direct = temp_intensity != 0
+        min_range_idx_direct = int(self.min_range_idx_direct.item())
+        mask_direct[:, :min_range_idx_direct] = False
+        self.polar_intensity_sparse = temp_intensity[mask_direct]
+
+        self.direct_r_sparse = self.range_vec.unsqueeze(0).repeat(self.nb_azimuths, 1)[mask_direct]
+        self.direct_az_ids_sparse = torch.arange(self.nb_azimuths, device=self.device).unsqueeze(-1).repeat(1, max_range_idx_direct)[mask_direct]
+        self.direct_r_ids_sparse = torch.arange(max_range_idx_direct, device=self.device).unsqueeze(0).repeat(self.nb_azimuths, 1)[mask_direct]
+        if self.use_doppler:
+            self.mask_direct_even = torch.empty_like(mask_direct, device=self.device)
+            self.mask_direct_even[1::2] = False
+            self.mask_direct_even[::2] = True
+            self.mask_direct_even = self.mask_direct_even[mask_direct]
+            self.mask_direct_odd = torch.empty_like(mask_direct, device=self.device)
+            self.mask_direct_odd[::2] = False
+            self.mask_direct_odd[1::2] = True
+            self.mask_direct_odd = self.mask_direct_odd[mask_direct]
+        else:
+            self.mask_direct_even = torch.ones_like(self.polar_intensity_sparse, device=self.device, dtype=torch.bool)
+            self.mask_direct_odd = torch.zeros_like(self.mask_direct_even, device=self.device, dtype=torch.bool)
+
+        self.direct_nb_non_zero = torch.tensor(self.polar_intensity_sparse.shape[0], device=self.device)
+        self.direct_r_ids_even = self.direct_r_ids_sparse[self.mask_direct_even]
+        self.direct_r_ids_odd = self.direct_r_ids_sparse[self.mask_direct_odd]
+        self.direct_r_even = self.direct_r_sparse[self.mask_direct_even]
+        self.direct_r_odd = self.direct_r_sparse[self.mask_direct_odd]
+        self.direct_az_ids_even = self.direct_az_ids_sparse[self.mask_direct_even]
+        self.direct_az_ids_odd = self.direct_az_ids_sparse[self.mask_direct_odd]
+
+        # Prepare polar coordinate tensor needed by polarCoordCorrection.
+        max_range_idx = self.max_range_idx if hasattr(self, 'max_range_idx') else max_range_idx_direct
+        range_vec = torch.arange(max_range_idx, device=self.device).float() * res + (res * 0.5)
+        self.polar_coord_raw_gp_infered = torch.zeros((self.nb_azimuths, max_range_idx, 2), device=self.device)
+        self.polar_coord_raw_gp_infered[:, :, 0] = self.azimuths.unsqueeze(1).repeat(1, max_range_idx)
+        self.polar_coord_raw_gp_infered[:, :, 1] = range_vec.unsqueeze(0).repeat(self.nb_azimuths, 1)
+
+        self.polar_intensity = torch.tensor(
+            warmup_img_np[:, :max(self.max_id, self.max_range_idx_direct)],
+            dtype=torch.float32,
+            device=self.device,
+        )
+        polar_std = torch.std(self.polar_intensity, dim=1)
+        polar_mean = torch.mean(self.polar_intensity, dim=1)
+        self.polar_intensity -= (polar_mean.unsqueeze(1) + 2 * polar_std.unsqueeze(1))
+        self.polar_intensity[self.polar_intensity < 0] = 0
+        self.polar_intensity = torchvision.transforms.functional.gaussian_blur(self.polar_intensity.unsqueeze(0), (9,1), 3).squeeze()
+        self.polar_intensity /= torch.max(self.polar_intensity, dim=1, keepdim=True)[0]
+        self.polar_intensity[torch.isnan(self.polar_intensity)] = 0
+
+        warmup_shift = torch.zeros((nb_azimuths,), device=self.device)
+        warmup_pos = torch.zeros((nb_azimuths, 2, 1), device=self.device)
+        warmup_rot = torch.zeros((nb_azimuths, 1), device=self.device)
+        warmup_sparse_count = max(1, int(self.direct_nb_non_zero.item()))
+        warmup_sparse_xy = torch.zeros((warmup_sparse_count, 2, 1), device=self.device)
+        warmup_sparse_azr = torch.zeros((warmup_sparse_count, 2), device=self.device)
+
+        self.getUpDownPolarImages(warmup_img_np[:, self.min_range_idx:(self.max_range_idx+1)])
+        self.prepareLocalMapPolarCoords(self.local_map_polar, float(self.local_map_res))
+        self.bilinearInterpolation(self.local_map, self.local_map_polar.clone())
+        self.polarToCartCoordCorrectionSparse(warmup_pos, warmup_rot, warmup_shift)
+        polar_coord_corrected = self.polarCoordCorrection(warmup_pos, warmup_rot)
+        if self.use_doppler:
+            self.imgDopplerInterpAndJacobian(warmup_shift)
+        cart_corrected_sparse, _, _ = self.polarToCartCoordCorrectionSparse(warmup_pos, warmup_rot, warmup_shift)
+        cart_idx_sparse = self.cartToLocalMapIDSparse(cart_corrected_sparse).squeeze()
+        self.bilinearInterpolationSparse(self.local_map, cart_idx_sparse)
+
+        prev_shifted = self.perLineInterpolation(self.polar_intensity[:, :self.max_id], warmup_shift)
+        polar_coord_corrected[:,:,0] -= (self.azimuths[0])
+        polar_coord_corrected[polar_coord_corrected[:,:,0] < 0] = polar_coord_corrected[polar_coord_corrected[:,:,0] < 0] + torch.tensor((2 * torch.pi, 0)).to(self.device)
+        polar_coord_corrected[:,:,0] *= (self.nb_azimuths / (2 * torch.pi))
+        polar_coord_corrected[:,:,1] -= (res / 2.0)
+        polar_coord_corrected[:,:,1] /= res
+        prev_shifted = torch.concatenate((prev_shifted, prev_shifted[0,:].unsqueeze(0)), dim=0)
+        polar_target = self.bilinearInterpolation(prev_shifted, polar_coord_corrected)
+        temp_polar_to_interp = self.prepareLocalMapPolarCoords(self.local_map_polar, float(res))
+        polar_target = torch.concatenate((polar_target, polar_target[0,:].unsqueeze(0)), dim=0)
+        local_map_update = self.bilinearInterpolation(polar_target, temp_polar_to_interp)
+        self.local_map_blurred = torchvision.transforms.functional.gaussian_blur(local_map_update.unsqueeze(0).unsqueeze(0), 3).squeeze()
+        self.bilinearInterpolationSparse(self.local_map_blurred, cart_idx_sparse)
+        self.moveLocalMap(torch.zeros((2,), device=self.device), torch.tensor(0.0, device=self.device))
+
+        # Warm up the first-step optimisation path as executed in odometryStep.
+        saved_step_counter = self.step_counter
+        saved_state_init = self.state_init.clone()
+        saved_previous_vel = self.previous_vel.clone()
+        saved_max_diff_vel = self.max_diff_vel.clone() if isinstance(self.max_diff_vel, torch.Tensor) else self.max_diff_vel
+        self.step_counter = 0
+        _ = self.solve(self.state_init.clone(), nb_iter=250, cost_tol=1e-6, step_tol=1e-5)
+        self.step_counter = saved_step_counter
+        self.state_init = saved_state_init
+        self.previous_vel = saved_previous_vel
+        self.max_diff_vel = saved_max_diff_vel
+
+                
+
+                
+                
+
 
 
     def odometryStep(self, radar_data, imu_data):
-    
-
         with torch.no_grad():
             if self.initialized == False:
                 self.initialize(radar_data)
@@ -478,13 +667,12 @@ class Dro():
             temp_X1[:, 1] = temp_X1[:, 1] / l_range
             temp_X2[:, 1] = temp_X2[:, 1] / l_range
             # Replace dist with np only operations to avoid potential issues with torch and the GPU
-            dist = np.sum((X1[:, np.newaxis, :] - X2[np.newaxis, :, :])**2, axis=2)
+            dist = np.sum((temp_X1[:, np.newaxis, :] - temp_X2[np.newaxis, :, :])**2, axis=2)
             return np.exp(-dist/2)
 
 
 
     # Get the polar images from the input image using the GP interpolation
-    @torch.compile
     def getUpDownPolarImages(self, img):
         # Prepare the input for the torch convolution
         with torch.no_grad():
@@ -556,7 +744,6 @@ class Dro():
 
 
             
-    @torch.compile(dynamic=True)
     def prepareLocalMapPolarCoords(self, local_map_polar, res):
         with torch.no_grad():
             temp_polar_to_interp = local_map_polar.clone()
@@ -569,7 +756,6 @@ class Dro():
 
 
     # Perform the bilinear interpolation of the image im at the coordinates az_r (az the vertical axis, r the horizontal axis)
-    @torch.compile
     def bilinearInterpolation(self, im, az_r):
         with torch.no_grad():
             az0 = torch.floor(az_r[:, :, 0]).int()
@@ -605,7 +791,6 @@ class Dro():
 
 
     # Same a bilinearInterpolation_ but for the sparse case
-    @torch.compile
     def bilinearInterpolationSparse(self, im, az_r):
         with torch.no_grad():
             az0 = torch.floor(az_r[:, 0]).int()
@@ -645,7 +830,6 @@ class Dro():
         
 
     # Cost function and Jacobian for the Doppler and direct cost functions
-    #@torch.compile
     def costFunctionAndJacobian(self, state, doppler, direct, degraded=False):
         with torch.no_grad():
             state_size = len(state)
@@ -714,7 +898,6 @@ class Dro():
 
     # Perform linear interpolation of the image im using the shift (in pixels)
     # (used for correcting the doppler shift when undistorting the scan)
-    @torch.compile
     def perLineInterpolation(self, img, shift):
         with torch.no_grad():
             shift_int = torch.floor(shift).int()
@@ -731,7 +914,6 @@ class Dro():
             return interp
 
     # Correcting the scan polar coordinates to cartesian coordinates based on the per azimuth poses for the direct cost function
-    @torch.compile
     def polarToCartCoordCorrectionSparse(self, pos, rot, doppler_shift):
         with torch.no_grad():
             # Get the polar coordinates of the image
@@ -794,11 +976,12 @@ class Dro():
 
     # Correcting the scan polar coordinates to cartesian coordinates based on the per azimuth poses
     # (used for scan undistortion before updating the local map)
-    @torch.compile
     def polarCoordCorrection(self, pos, rot):
         with torch.no_grad():
             # Get the polar coordinates of the image
             polar_coord = self.polar_coord_raw_gp_infered
+            pos = pos.reshape((-1, 2))
+            rot = rot.reshape((-1, 1))
 
             c_az = torch.cos(polar_coord[:, :, 0])
             s_az = torch.sin(polar_coord[:, :, 0])
@@ -812,8 +995,8 @@ class Dro():
             y_rot = x * s_rot + y * c_rot
 
             # Translate the coordinates
-            x_trans = x_rot+pos[:, 0]
-            y_trans = y_rot+pos[:, 1]
+            x_trans = x_rot + pos[:, 0].unsqueeze(1)
+            y_trans = y_rot + pos[:, 1].unsqueeze(1)
 
             # Get the new polar coordinates
             polar = torch.zeros((self.nb_azimuths, polar_coord.shape[1], 2)).to(self.device)
@@ -827,7 +1010,6 @@ class Dro():
 
     # Perform the linear interpolation of the image per row based on the estimated Doppler shift
     # (used in Doppler-based velocity constraint)
-    @torch.compile
     def imgDopplerInterpAndJacobian(self, shift):
         with torch.no_grad():
             shift_int = torch.floor(-shift).int()
@@ -944,7 +1126,6 @@ class Dro():
             return out
 
     # Same as cartToLocalMapID_ but for the sparse case
-    @torch.compile
     def cartToLocalMapIDSparse(self, xy):
         with torch.no_grad():
             out = torch.empty_like(xy, device=self.device)
@@ -955,7 +1136,6 @@ class Dro():
 
 
     # Move localMap to the new position and rotation (used for updating the local map)
-    @torch.compile
     def moveLocalMap(self, pos, rot):
         with torch.no_grad():
             # Set to zero the first and last row and column of the localMap
@@ -978,7 +1158,6 @@ class Dro():
 
 
     # Get the Doppler velocity separately from the odometry step for the tuning of lateral velocity bias
-    @torch.compile
     def getDopplerVelocity(self):
         with torch.no_grad():
             if not self.use_doppler:

@@ -52,6 +52,7 @@ class DroNode(Node):
         self.last_imu_time = None
 
         self.initialized = False
+        self.first = True
 
         # Load the config file and populate the DRO options
         config_file_path = "config/config_dro.yaml"
@@ -91,6 +92,7 @@ class DroNode(Node):
 
         self.dro = Dro(dro_opts, self)
         self.dro_opts = dro_opts
+        self.get_logger().info("DRO ready")
 
 
     def initialize(self, radar_data):
@@ -179,7 +181,11 @@ class DroNode(Node):
         if len(self.radar_data_buffer) == 0 or len(self.imu_data_buffer) == 0:
             return
         first_radar_time = self.radar_data_buffer[0]['timestamps'][0]
-        last_radar_time = self.radar_data_buffer[0]['timestamps'][-1] + 2000  # Add 1ms to ensure we cover the radar timestamps
+        if self.first and self.imu_data_buffer[0]['timestamp'] > self.radar_data_buffer[0]['timestamps'][0]:
+            self.imu_data_buffer[0]['timestamp'] = self.radar_data_buffer[0]['timestamps'][0] - 1000
+            self.first = False
+
+        last_radar_time = self.radar_data_buffer[0]['timestamps'][-1] + 2000  # Add 2ms to ensure we cover the radar timestamps
         if self.imu_data_buffer[0]['timestamp'] > first_radar_time or self.imu_data_buffer[-1]['timestamp'] < last_radar_time:
             return
         

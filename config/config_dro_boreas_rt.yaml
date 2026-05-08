@@ -31,6 +31,7 @@ estimation:
   vy_bias_prior: 0.11
   min_time_bias_init: 1.0
   gyro_bias_alpha: 0.01
+  max_acceleration: 10.0
 gp:
   lengthscale_az: 2.0
   lengthscale_range: 4.0
@@ -48,3 +49,6 @@ radar:
   ft: 76.04E9
   meas_freq: 1600.0
   range_offset: -0.31
+  resolution: 0.04381
+  doppler_enabled: true
+  nb_azimuths: 400

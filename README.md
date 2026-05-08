@@ -96,6 +96,17 @@ ros2 launch dr_pogo dr_pogo.launch.py
 
 This starts all four estimation nodes plus an RViz2 visualizer with the bundled `config/rviz.rviz` preset.
 
+**Note:** The DRO code will attempt to leverage torch compilation if the `config/config_dro.yaml` file contains the following parameters:
+```yaml
+radar:
+  nb_azimuths: XXX
+  doppler_enabled: true/false
+  resolution: Y.YYYY
+```
+If you chose to enable compilation, the initialization of the `dro_node` will take significantly longer (something like 30sec?). When the comilation is done and DRO is ready to process data, you should see the following message in the terminal:
+```[INFO] [dro_node]: DRO ready
+```
+If you want to disable compilation, simply remove one of the above parameters from the config file (e.g., `resolution`).
 
 ### 3. Play a Boreas sequence
 
