@@ -12,6 +12,7 @@ import copy
 from dro import Dro, kDefaultDroOpts
 import os
 from scipy.spatial.transform import Rotation as R
+from cv_bridge import CvBridge
 import pandas as pd
 import cv2
 import time
@@ -92,6 +93,7 @@ class DroNode(Node):
 
         self.dro = Dro(dro_opts, self)
         self.dro_opts = dro_opts
+        self.bridge = CvBridge()
         self.get_logger().info("DRO ready")
 
 
@@ -274,22 +276,14 @@ class DroNode(Node):
         
     # Input local map needs to be in [0, 255] uint8 format np array
     def publishLocalMap(self, local_map, xy_theta, timestamp):
-        t1 = time.time()
         if local_map.dtype != np.uint8:
             self.get_logger().error(f"Local map numpy array has dtype {local_map.dtype}, expected uint8.")
             return
 
-
-        local_map_image_msg = Image()
+        local_map_image_msg = self.bridge.cv2_to_imgmsg(local_map, encoding="mono8")
         local_map_image_msg.header.stamp.sec = int(timestamp // 1e6)
         local_map_image_msg.header.stamp.nanosec = int((timestamp % 1e6) * 1e3)
         local_map_image_msg.header.frame_id = "radar"
-        local_map_image_msg.height = int(local_map.shape[0])
-        local_map_image_msg.width = int(local_map.shape[1])
-        local_map_image_msg.encoding = "mono8"
-        local_map_image_msg.is_bigendian = False
-        local_map_image_msg.step = int(local_map.shape[1] * local_map.itemsize)
-        local_map_image_msg.data = local_map.tobytes()
         self.local_map_image_publisher.publish(local_map_image_msg)
 
         map_info_msg = LocalMapInfo()

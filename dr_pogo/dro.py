@@ -54,6 +54,7 @@ kDefaultDroOpts = {
 
 class Dro():
     def __init__(self, opts, node):
+        torch.set_float32_matmul_precision('high')
         self.node = node
         with torch.no_grad():
             self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
