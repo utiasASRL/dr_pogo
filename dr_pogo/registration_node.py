@@ -2,6 +2,7 @@
 
 import os
 from dataclasses import dataclass
+from typing import Optional
 
 import cv2
 import numpy as np
@@ -25,7 +26,7 @@ class RegistrationResult:
     scale: float
     num_matches: int
     reason: str
-    viz_image: np.ndarray | None
+    viz_image: Optional[np.ndarray]
 
 def poseToxytheta(pose):
     x = pose[0, 3]
@@ -402,7 +403,7 @@ class RegistrationNode(Node):
 
         self.counter = 0
 
-    def resolvePath(self, path: str) -> str | None:
+    def resolvePath(self, path: str) -> Optional[str]:
         if os.path.isabs(path) and os.path.isfile(path):
             return path
         if os.path.isfile(path):
