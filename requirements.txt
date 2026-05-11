@@ -7,7 +7,7 @@ scikit-image
 opencv-python
 matplotlib
 PyYAML
-pyboreas
+asrl-pyboreas
 torch
 torchvision
 
