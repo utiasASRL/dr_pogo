@@ -1,6 +1,6 @@
 # Dr-PoGO: Direct Radar Pose-Graph Optimization
 
-Dr-PoGO is a radar-based SLAM framework.
+Dr-PoGO is a radar-based SLAM framework (preprint [here](https://arxiv.org/abs/2605.04806)).
 It combines **Direct Radar Odometry (DRO)** with **RaPlace** loop-closure detection and a **pose-graph optimizer** to produce globally consistent trajectories from FMCW radar data.
 
 This branch contains a ROS 2 implementation of the full Dr-PoGO pipeline for online operation and real-time visualization in RViz2.
