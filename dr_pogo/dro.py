@@ -606,49 +606,48 @@ class Dro():
             self.shift_to_range = torch.tensor(res / 2.0).to(self.device)
             self.range_vec = torch.arange(self.max_range_idx_direct).to(self.device).float() * res + (res/2.0)
 
-            if self.isDopplerEnabled(radar_data):
-                self.use_doppler = True
+            self.use_doppler = self.isDopplerEnabled(radar_data)
 
-                range_start = int(np.ceil(float(self.opts['doppler']['min_range']) / res))
-                range_end = int(np.floor(float(self.opts['doppler']['max_range']) / res))
-                self.nb_bins = range_end - range_start + 1 + 2*self.kImgPadding
+            range_start = int(np.ceil(float(self.opts['doppler']['min_range']) / res))
+            range_end = int(np.floor(float(self.opts['doppler']['max_range']) / res))
+            self.nb_bins = range_end - range_start + 1 + 2*self.kImgPadding
 
-                # Prepare the GP convolutions for the image interlacing
-                x = np.arange(-self.size_az, self.size_az+1)
-                mask_smooth = x%2 == 0
-                mask_interp = x%2 != 0
-                x_smooth = x[mask_smooth].astype(np.float32)
-                x_interp = x[mask_interp].astype(np.float32)
-                y = np.arange(-self.size_range, self.size_range+1)
-                XX_smooth, YY_smooth = np.meshgrid(x_smooth, y)
-                XX_interp, YY_interp = np.meshgrid(x_interp, y)
-                self.X_smooth = np.vstack((XX_smooth.T.flatten(), YY_smooth.T.flatten())).T
-                self.X_interp = np.vstack((XX_interp.T.flatten(), YY_interp.T.flatten())).T
+            # Prepare the GP convolutions for the image interlacing
+            x = np.arange(-self.size_az, self.size_az+1)
+            mask_smooth = x%2 == 0
+            mask_interp = x%2 != 0
+            x_smooth = x[mask_smooth].astype(np.float32)
+            x_interp = x[mask_interp].astype(np.float32)
+            y = np.arange(-self.size_range, self.size_range+1)
+            XX_smooth, YY_smooth = np.meshgrid(x_smooth, y)
+            XX_interp, YY_interp = np.meshgrid(x_interp, y)
+            self.X_smooth = np.vstack((XX_smooth.T.flatten(), YY_smooth.T.flatten())).T
+            self.X_interp = np.vstack((XX_interp.T.flatten(), YY_interp.T.flatten())).T
 
-                sz = float(self.opts['gp']['sz'])
-                n_smooth = self.X_smooth.shape[0]
-                K_smooth = self.seKernel(self.X_smooth, self.X_smooth, self.l_az, self.l_range) + sz**2*np.eye(n_smooth)
-                Kinv_smooth = np.linalg.inv(K_smooth)
-                ks_smooth = self.seKernel(np.array([[0, 0]]), self.X_smooth, self.l_az, self.l_range)
-                self.beta_smooth = (ks_smooth@Kinv_smooth).flatten()
+            sz = float(self.opts['gp']['sz'])
+            n_smooth = self.X_smooth.shape[0]
+            K_smooth = self.seKernel(self.X_smooth, self.X_smooth, self.l_az, self.l_range) + sz**2*np.eye(n_smooth)
+            Kinv_smooth = np.linalg.inv(K_smooth)
+            ks_smooth = self.seKernel(np.array([[0, 0]]), self.X_smooth, self.l_az, self.l_range)
+            self.beta_smooth = (ks_smooth@Kinv_smooth).flatten()
 
-                n_interp = self.X_interp.shape[0]
-                K_interp = self.seKernel(self.X_interp, self.X_interp, self.l_az, self.l_range) + sz**2*np.eye(n_interp)
-                Kinv_interp = np.linalg.inv(K_interp)
-                ks_interp = self.seKernel(np.array([[0, 0]]), self.X_interp, self.l_az, self.l_range)
-                self.beta_interp = (ks_interp@Kinv_interp).flatten()
+            n_interp = self.X_interp.shape[0]
+            K_interp = self.seKernel(self.X_interp, self.X_interp, self.l_az, self.l_range) + sz**2*np.eye(n_interp)
+            Kinv_interp = np.linalg.inv(K_interp)
+            ks_interp = self.seKernel(np.array([[0, 0]]), self.X_interp, self.l_az, self.l_range)
+            self.beta_interp = (ks_interp@Kinv_interp).flatten()
 
-                self.beta_smooth_torch_conv = torch.nn.Conv2d(1, 1, (len(x_smooth), len(y)), bias=False, padding=(len(x_smooth)//2, len(y)//2))
-                beta_smooth_tensor = torch.tensor(self.beta_smooth.reshape((1, 1, len(x_smooth), len(y))).astype(np.float32)).to(self.device)
-                self.beta_smooth_torch_conv.weight = torch.nn.Parameter(beta_smooth_tensor)
-                self.beta_interp_torch_conv = torch.nn.Conv2d(1, 1, (len(x_interp), len(y)), bias=False, padding=(len(x_interp)//2, len(y)//2))
-                beta_interp_tensor = torch.tensor(self.beta_interp.reshape((1, 1, len(x_interp), len(y))).astype(np.float32)).to(self.device)
-                self.beta_interp_torch_conv.weight = torch.nn.Parameter(beta_interp_tensor)
+            self.beta_smooth_torch_conv = torch.nn.Conv2d(1, 1, (len(x_smooth), len(y)), bias=False, padding=(len(x_smooth)//2, len(y)//2))
+            beta_smooth_tensor = torch.tensor(self.beta_smooth.reshape((1, 1, len(x_smooth), len(y))).astype(np.float32)).to(self.device)
+            self.beta_smooth_torch_conv.weight = torch.nn.Parameter(beta_smooth_tensor)
+            self.beta_interp_torch_conv = torch.nn.Conv2d(1, 1, (len(x_interp), len(y)), bias=False, padding=(len(x_interp)//2, len(y)//2))
+            beta_interp_tensor = torch.tensor(self.beta_interp.reshape((1, 1, len(x_interp), len(y))).astype(np.float32)).to(self.device)
+            self.beta_interp_torch_conv.weight = torch.nn.Parameter(beta_interp_tensor)
 
 
-                # Doppler range bounds
-                self.max_range_idx = int(np.floor(float(self.opts['doppler']['max_range']) / res))
-                self.min_range_idx = int(np.ceil(float(self.opts['doppler']['min_range']) / res))
+            # Doppler range bounds
+            self.max_range_idx = int(np.floor(float(self.opts['doppler']['max_range']) / res))
+            self.min_range_idx = int(np.ceil(float(self.opts['doppler']['min_range']) / res))
 
             self.gyr_bias = 0.0
 
