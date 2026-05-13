@@ -135,7 +135,6 @@ class DroNode(Node):
                 os.makedirs(self.odometry_3d_output_path)
                 self.odometry_3d_output_path = os.path.join(self.odometry_3d_output_path, seq_ID + '.txt')
 
-
         self.initialized = True
 
 
