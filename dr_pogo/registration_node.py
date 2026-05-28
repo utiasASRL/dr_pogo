@@ -71,13 +71,17 @@ def affineToPoseAndScale(affine_matrix, pix_res, img_shape):
     return pose, scale
 
 class LocalMapRegistrator:
-    def __init__(self, source, target, res, xytheta_init=np.array([0, 0, 0])):
+    def __init__(self, source, target, res, xytheta_init=np.array([0, 0, 0]), use_gpu_if_available=True):
 
         # Check the input shapes match and that the nb of collumn and rows are odd
         if source.shape[0] != target.shape[0] or source.shape[1] != target.shape[1] or source.shape[0] % 2 == 0 or source.shape[1] % 2 == 0:
             raise ValueError("Source and target images must have the same shape and odd dimensions")
 
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        if use_gpu_if_available and torch.cuda.is_available():
+            self.device = torch.device("cuda")
+        else:
+            self.device = torch.device("cpu")
+            torch.set_num_threads(1)
 
         self.optimisation_first_step = 0.1
 
@@ -378,6 +382,11 @@ class RegistrationNode(Node):
         self.ransac_thr = float(cfg["ransac_thr"])
         self.max_img_size = int(cfg["max_img_size"])
 
+        if "use_gpu_if_available" in cfg:
+            self.use_gpu_if_available = bool(cfg["use_gpu_if_available"])
+        else:
+            self.use_gpu_if_available = True
+
         self.max_scale_error = 0.05
         self.sift_extractor = cv2.SIFT_create(
             nfeatures=0,
@@ -561,7 +570,7 @@ class RegistrationNode(Node):
             img_j_small = cv2.GaussianBlur(img_j_small, (5, 5), 0)
 
             # Perform fine registration using "gp_doppler"
-            local_map_registrator = LocalMapRegistrator(img_j_small, img_i_small, res_small, poseToxytheta(reg_result.pose))
+            local_map_registrator = LocalMapRegistrator(img_j_small, img_i_small, res_small, poseToxytheta(reg_result.pose), use_gpu_if_available=self.use_gpu_if_available)
             local_map_registrator.gridSearchInitialization([[-2,2],[-2,2], [np.radians(-1.0), np.radians(1.0)]], nb_steps=3)
 
             state = local_map_registrator.register(nb_iter=20, verbose=False, step_tol=1e-4)
@@ -573,7 +582,7 @@ class RegistrationNode(Node):
             # Add Gaussian blur to the images
             img_i_small = cv2.GaussianBlur(img_i_small, (5, 5), 0)
             img_j_small = cv2.GaussianBlur(img_j_small, (5, 5), 0)
-            local_map_registrator = LocalMapRegistrator(img_j_small, img_i_small, res_small, state)
+            local_map_registrator = LocalMapRegistrator(img_j_small, img_i_small, res_small, state, use_gpu_if_available=self.use_gpu_if_available)
             state = local_map_registrator.register(nb_iter=40, verbose=False, step_tol=1e-4)
             x, y, theta = state
 
