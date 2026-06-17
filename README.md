@@ -1,6 +1,6 @@
 # Dr-PoGO: Direct Radar Pose-Graph Optimization
 
-Dr-PoGO is a radar-based SLAM framework.
+Dr-PoGO is a radar-based SLAM framework (preprint [here](https://arxiv.org/abs/2605.04806)).
 It combines **Direct Radar Odometry (DRO)** with **RaPlace** loop-closure detection and a **pose-graph optimizer** to produce globally consistent trajectories from FMCW radar data.
 
 This branch contains a ROS 2 implementation of the full Dr-PoGO pipeline for online operation and real-time visualization in RViz2.
@@ -88,6 +88,9 @@ source install/setup.bash
 Copy the config file `config/config_dro_boreas_rt.yaml` to `config/config_dro.yaml` and edit the parameters as needed.
 You can also customize the RaPlace, registration, and pose-graph config files if desired (all parameters should have reasonable defaults though).
 
+Not that by default, the registration node is set to use GPU if available. Depending on your hardware and the size of the local maps, this may slow down the processing of DRO's odometry (both nodes can compete for GPU resources). If you want to disable GPU usage for loop registration, simply set `use_gpu_if_available: false` in the `config/config_registration.yaml` file. It will be slower to compute the loop registration (using only 1 CPU thread), but DRO's behaviour will be more predictable.
+
+
 ### 2. Launch the full pipeline
 
 ```bash
@@ -126,7 +129,7 @@ All YAML config files live under `config/`.
 |------|------|----------------|
 | `config_dro.yaml` | `dro_node` | Sensor extrinsics (`T_axle_radar`), range limits, GP lengthscales |
 | `config_raplace.yaml` | `raplace_node` | `min_time_diff`, `max_odom_drift`, `max_img_size` |
-| `config_registration.yaml` | `registration_node` | `lowe_ratio`, `ransac_thr`, `max_img_size` |
+| `config_registration.yaml` | `registration_node` | `lowe_ratio`, `ransac_thr`, `max_img_size`, `use_gpu_if_available` |
 | `config_pogo.yaml` | `pogo_node` | Odometry/loop noise std-devs, loss scales, `estimate_bias` |
 
 
@@ -147,6 +150,7 @@ Atop ROS2 topics shown in RViz, Dr-PoGO outputs the odometry and pose-graph opti
 
 ### TODOs
 
-- [ ] Improve documentation
-- [ ] Make DRO faster with compilation (e.g., using `torch.compile` but need some tricks)
-- [ ] Add the 3D odometry output as for 3DRO
+- [ ] Making the dense loop registration refinement faster !! (need to profile first)
+- [ ] Improving documentation
+- [ ] Looking at making DRO even faster? (real time on my RTX 500 Mobile GPU (30W), so not a priority)
+- [ ] Adding the 3D odometry output as for 3DRO
